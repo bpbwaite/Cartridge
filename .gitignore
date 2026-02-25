@@ -1,0 +1,15 @@
+__pycache__/
+.vscode/
+
+images*/*.jpg
+old/
+notes.txt
+
+.env
+.envrc
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
