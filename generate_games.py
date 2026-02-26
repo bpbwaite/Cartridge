@@ -75,10 +75,14 @@ def isSteamGameVR(appID: str) -> bool:
         raise Exception
     
     if response.json()[appID]['success']:
-        cats = response.json()[appID]['data']['categories']
-        for i in cats:
-            if i['id'] in [53, 54]: # code for "VR supported", "VR only"
-                return True
+        data = response.json()[appID]['data']
+        if 'categories' in data:
+            cats = response.json()[appID]['data']['categories']
+            for i in cats:
+                if i['id'] in [53, 54]: # code for "VR supported", "VR only"
+                    return True
+        else:
+            print(f"App {data['name']} ({appID}) has no category/feature tags (probably a soundtrack), ignoring VR options.")
     return False
 
 def buildGameList(source: str):
@@ -87,7 +91,7 @@ def buildGameList(source: str):
     with open('batch_game_list.h', 'wt') as F:
         F.write('#pragma once\n')
         F.write('#include <Arduino.h>\n')
-        F.write('static const char *game_list[] PROGMEM = {\n')
+        F.write('static const char *P_game_list[] PROGMEM = {\n')
         
         time_of_last_request = 0
         for appID in games_by_appID:
@@ -106,13 +110,15 @@ def buildGameList(source: str):
             vr = "Y" if isSteamGameVR(appID=appID) else "N"
             F.write(f'\t"{g}:{appID}:{vr}",\n')
         
-        F.write('"\\0"\n')
+        F.write('\t"\\0"\n')
         F.write('};\n')
+    print('Build games list: complete')
 
 def main():
 
-    getImages('steam', 'G:\\Games\\Steam\\steamapps', 'images')
-    buildGameList('G:\\Games\\Steam\\steamapps')
+    #getImages('steam', 'G:\\Games\\Steam\\steamapps', 'images')
+    #buildGameList('G:\\Games\\Steam\\steamapps')
+    buildGameList('C:\\Program Files (x86)\\Steam\\steamapps')
 
 if __name__ == '__main__':
     main()
