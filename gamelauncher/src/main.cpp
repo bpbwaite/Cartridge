@@ -2,19 +2,26 @@
 #include <Wire.h>
 #include <SPI.h>
 
+#include <Entropy.h>
+#include <FastCRC.h>
+
 #include <Adafruit_PN532.h>
 #include <Adafruit_NeoPixel.h>
 
 #include "batch_game_list.h"
 
-#define PN532_SS               (10)
-#define DEBUG_WAIT_FOR_SERIAL  (true)
-#define SERIAL_BAUD            (115200) // PN532 likes this to be the case in some instances
-#define NEOPIXEL_DATA          (2)
 #define WIN_RUN_WAIT           (500)
-#define BATCH_WRITE_MODE       (true)
 #define NPXL_LEN               (1) // 1 or 3
 #define CHIP_PEEK_POLLING_FREQ (5) // Hz, max 10 please
+// Pinout
+#define NEOPIXEL_DATA     (2)
+#define PIN_DIP1          (6)
+#define PIN_DIP2          (4)
+#define PIN_DIP3          (3)
+#define PIN_PN532_CS      (10)
+#define SPI_RESERVED_MOSI (11)
+#define SPI_RESERVED_MISO (12)
+#define SPI_RESERVED_SCK  (13)
 
 const char *CUSTOM_ASCII_DELIMITER = "\xBF"; // upside down question mark delimiter
 
@@ -163,7 +170,7 @@ boolean updatendef_ntag215(Adafruit_PN532 *nfc, const uint8_t *uid, const char *
 }
 
 boolean readndefentry_ntag215(Adafruit_PN532 *nfc, uint8_t *data, uint16_t *dataLength) {
-    // prefix is ignored. todo: dont ignore it?
+    // prefix is ignored.
     // dataLength is the size of your data buffer, and this value will be updated to the size of the retreived data upon success.
     uint8_t readbuffer[504]; // just the user section
 
@@ -191,7 +198,7 @@ boolean readndefentry_ntag215(Adafruit_PN532 *nfc, uint8_t *data, uint16_t *data
     return false;
 }
 
-// misc functions
+// helpful i/o functions
 void await_userprompt() {
     Serial.println("----");
     Serial.println("Send a character to continue...");
@@ -217,8 +224,7 @@ void pc_run_command(const char *s) {
     Keyboard.print("powershell.exe -Command \"");
     Keyboard.print(s);
     Keyboard.print("\"");
-    delay(17);
-    ; // wait for printing to complete?
+    delay(17); // wait for printing to complete?
     Keyboard.press(KEY_ENTER);
     Keyboard.release(KEY_ENTER);
 }
@@ -269,7 +275,7 @@ void pc_kill_game(const char *appID, boolean just_alt_f4 = false) {
         Keyboard.print("app_stop ");
         Keyboard.print(appID);
         Keyboard.print(" force:1");
-        delay(17); // wait for printing to complete?
+        delay(250); // wait for printing to complete?
         // todo: check if this needs to be longer/can be shorter.
         // the steam UI is weird and has variable response to key presses, sometimes its slower than windows
         // so the window minimizes before the command is even executed.
@@ -284,16 +290,19 @@ void pc_kill_game(const char *appID, boolean just_alt_f4 = false) {
 
 // ### my main functions, which can access these global variables
 
-Adafruit_PN532 g_nfc(PN532_SS); // Hardware SPI connection on Teensy 4.0: CS/SS=10, MOSI=11, MISO=12, SCK=13
+Adafruit_PN532 g_nfc(PIN_PN532_CS); // Hardware SPI connection on Teensy 4.0
 Adafruit_NeoPixel g_neopixel(NPXL_LEN, NEOPIXEL_DATA, NEO_GRB + NEO_KHZ800);
 IntervalTimer g_neopixelTimer;
+FastCRC8 g_CRC8;
+
+uint8_t dipSwitches = 0b000; // debug|batchWrite|closePrev
 
 void neopixel_handler(const char *mode, uint32_t min_show_ms = 0) {
     // Organize my neopixel calls into one neat function thats interrupt tolerant
     // since only this function calls show, from within interrupt context, the npxl doesn't need to be volatile
     // hard time limit of 100ms (takes ~300us)
     // supporting variable length strips, 1 or 3 leds
-    // convey_message[0] can be one of
+    // mode[0] can be one of
     // '_': interrupt, called from interrupt during busy mode. must not block, but animate on each call (reading/writing etc)
     // 'C': clear
     // 'F': failure (solid red)
@@ -301,10 +310,12 @@ void neopixel_handler(const char *mode, uint32_t min_show_ms = 0) {
     // 'B': busy (initializes an interrupt timer)
     // 'W': waiting/white (waiting on the user)
 
-    const uint32_t COLOR_FAIL           = 0xB30C2E;
-    const uint32_t COLOR_SUCCESS        = 0x0ED45A;
-    const uint32_t COLOR_BUSY           = 0xFAAB00;
-    const uint32_t COLOR_WHITE          = 0xFFFFE0;
+    const uint32_t COLOR_FAIL        = 0xB30C2E;
+    const uint32_t COLOR_SUCCESS     = 0x0ED45A;
+    const uint32_t COLOR_BUSY        = 0xFAAB00;
+    const uint32_t COLOR_WAITING     = 0xFFFFE0;
+    const uint32_t COLOR_OVERHEATING = 0xFF0000;
+
     const unsigned long busyBlinkSwitch = 245;    // ms, but note this function updates at most every bustCheckPeriod-uS
     const int busyCheckPeriod           = 100000; // microseconds between each interrupt
 
@@ -349,6 +360,23 @@ void neopixel_handler(const char *mode, uint32_t min_show_ms = 0) {
         g_neopixelTimer.begin([]() -> void { neopixel_handler("_interrupt"); }, busyCheckPeriod);
         break;
     }
+    case 'H': {
+        // hot - ideally, min_show_ms != 0
+        if (min_show_ms <= 0) {
+            min_show_ms = 1000;
+        }
+        elapsedMillis sinceOverheat;
+        while (sinceOverheat < min_show_ms) {
+            // rapidly blink red
+            g_neopixel.fill(COLOR_OVERHEATING);
+            g_neopixel.show();
+            delay(50);
+            g_neopixel.clear();
+            g_neopixel.show();
+            delay(50);
+        }
+        return; // return, as this case has its own call to show()
+    }
     case 'C': {
         g_neopixel.clear();
         break;
@@ -362,7 +390,7 @@ void neopixel_handler(const char *mode, uint32_t min_show_ms = 0) {
         break;
     }
     case 'W': {
-        g_neopixel.fill(COLOR_WHITE);
+        g_neopixel.fill(COLOR_WAITING);
         break;
     }
     }
@@ -371,28 +399,44 @@ void neopixel_handler(const char *mode, uint32_t min_show_ms = 0) {
     delay(min_show_ms);
 }
 
-void do_batchwrite(void) {
+void temp_checker(void) {
+    static elapsedMillis sinceTemperature;
+    if (sinceTemperature > 10000) {
+        float coreTempC = tempmonGetTemp();
+        Serial.print("Core temperature: ");
+        Serial.println(coreTempC);
+        sinceTemperature = 0;
+        if (coreTempC > float(85.0)) {
+            Serial.println("Core temperature is very hot!");
+            neopixel_handler("hot", 5000);
+            // just a warning;
+            // we can keep running, the teensy will panic halt if it hits a dangerous 95C
+        }
+    }
+}
 
+void do_batchwrite(void) {
+    
     elapsedMillis sinceLastPeek;
     elapsedMillis sinceFullChipWrite;
-
+    
     neopixel_handler("waiting");
     Serial.println("Starting Batch Write");
     await_userprompt();
     neopixel_handler("busy");
-
+    
     // steam logic
-    uint32_t game_index = 0;
+    uint32_t gameIndex = 0;
     while (1) {
-        if (strlen_P(P_game_list[game_index]) < 1) {
+        if (strlen_P(P_game_list[gameIndex]) < 1) {
             // all games scanned
             break;
         }
-
+        
         // get information about game
         // 241 bytes to hold one ndef region record + null char terminator
         char u_gameString_ndefEntry[241] = "";
-        strcpy_P(u_gameString_ndefEntry, P_game_list[game_index]);
+        strcpy_P(u_gameString_ndefEntry, P_game_list[gameIndex]);
         const char *mode = "VIASTEAM";
         char *identifier = strstr(u_gameString_ndefEntry, ":") + 1;
         // insert nullchar at id end
@@ -402,6 +446,14 @@ void do_batchwrite(void) {
         if (*(id_end + 1) == 'Y') {
             strcpy(vr_required, "Y");
         }
+        
+        // compute CRC
+        const char hex_chars[] = "0123456789ABCDEF";
+        
+        uint8_t crc_raw = g_CRC8.smbus((uint8_t*)identifier, strlen(identifier));
+        char crc_hex[3] = "00";
+        crc_hex[0] = hex_chars[(crc_raw >> 4) & 0xF]; 
+        crc_hex[1] = hex_chars[crc_raw & 0xF];
 
         Serial.print("Now writing: \"");
         Serial.print(u_gameString_ndefEntry);
@@ -409,14 +461,16 @@ void do_batchwrite(void) {
         Serial.print(identifier);
         Serial.print("), vr=");
         Serial.print(vr_required);
-        Serial.println("");
-
+        Serial.print(", CRC=0x");
+        Serial.print(crc_hex);
+        Serial.println(".");
+        
         neopixel_handler("waiting", 250); // gives you a little time to pull the previous game away, "debouncing"
-
+        
         boolean hasCartridge = false;
         while (1) {
             while (sinceLastPeek < 1000 / CHIP_PEEK_POLLING_FREQ) {
-                ;
+                temp_checker();
             }
             hasCartridge  = pn532_peek(&g_nfc);
             sinceLastPeek = 0;
@@ -425,19 +479,22 @@ void do_batchwrite(void) {
                 break;
             }
         }
-
+        
         // write to chip
         neopixel_handler("busy");
         strcpy(u_gameString_ndefEntry, "");
-
+        
         strcpy(u_gameString_ndefEntry, mode);
         strcat(u_gameString_ndefEntry, CUSTOM_ASCII_DELIMITER);
         strcat(u_gameString_ndefEntry, identifier);
         strcat(u_gameString_ndefEntry, CUSTOM_ASCII_DELIMITER);
         strcat(u_gameString_ndefEntry, vr_required);
+        strcat(u_gameString_ndefEntry, CUSTOM_ASCII_DELIMITER);
+        strcat(u_gameString_ndefEntry, crc_hex);
+
         Serial.print("Preparing to write entry: ");
         Serial.println(u_gameString_ndefEntry);
-
+        
         uint8_t uid[] = {0, 0, 0, 0, 0, 0, 0};
         boolean success;
         if ((success = isndef_ntag2xx(&g_nfc, uid))) {
@@ -446,10 +503,10 @@ void do_batchwrite(void) {
         if (success) {
             neopixel_handler("success");
             Serial.println("Prepare next cartridge");
-            while(pn532_peek(&g_nfc)) {
+            while (pn532_peek(&g_nfc)) {
                 ;
             }
-            game_index += 1;
+            gameIndex += 1;
         }
         else {
             neopixel_handler("failure", 1000);
@@ -463,17 +520,17 @@ void do_launcher(boolean dryRun = false) {
     // assume this is the only function being called repeatedly
     // kills previously running game if necessary
     // only launches if a new game is placed on the reader
-
+    
     static elapsedMillis sinceLastPeek;
     static elapsedMillis sinceLastFullChipRead;
     static char lastGame[24] = ""; // appID of the last run game
-
+    
     neopixel_handler("waiting");
-
+    
     boolean hasCartridge = false;
     while (1) {
         while (sinceLastPeek < 1000 / CHIP_PEEK_POLLING_FREQ) {
-            ; // chill
+            temp_checker();
         }
         hasCartridge  = pn532_peek(&g_nfc);
         sinceLastPeek = 0;
@@ -482,10 +539,10 @@ void do_launcher(boolean dryRun = false) {
             break;
         }
     }
-
+    
     uint8_t data[240];
     uint16_t dataLength = sizeof(data);
-
+    
     if (!readndefentry_ntag215(&g_nfc, data, &dataLength)) {
         Serial.println("Chip read error");
         neopixel_handler("failure", 1000);
@@ -493,23 +550,27 @@ void do_launcher(boolean dryRun = false) {
     else {
         char mode = toupper(data[3]); // v-i-a- S(team), G(og), P(ath), D(olphin)...
         switch (mode) {
-        case 'S': {
+            case 'S': {
             // steam game
             // scan ahead to the next delimiters
             char *id_start = strstr((char *) data, CUSTOM_ASCII_DELIMITER) + 1;
             char *id_end   = strstr((char *) id_start, CUSTOM_ASCII_DELIMITER) - 1;
             // boolean vr     = (*(id_end + 2) == 'Y');
             // todo: all the vr launching logic
+            // todo: read and confirm checksum bytes
 
             char steamCommandBuf[19 + 64] = "start steam://run/";
             uint8_t id_len                = id_end - id_start + 1;
             strncat(steamCommandBuf, id_start, id_len);
+            
+            // todo: check if the game identifier is 'random' and launch a random game instead
 
             if (strncmp(lastGame, id_start, id_len)) {
                 // the game differs from the last game
                 neopixel_handler("busy");
-                pc_kill_game(lastGame); // kill it (if it was a steam game) so we can run our game instead
-
+                if (dipSwitches&0b001) {
+                    pc_kill_game(lastGame); // kill it (if it was a steam game) so we can run our game instead
+                }
                 strncpy(lastGame, id_start, id_len);
                 Serial.print("RUNNING: ");
                 Serial.println(steamCommandBuf);
@@ -536,20 +597,33 @@ void do_launcher(boolean dryRun = false) {
 }
 
 void setup(void) {
+    // hardware setup
+    pinMode(PIN_DIP1, INPUT_PULLUP);
+    pinMode(PIN_DIP2, INPUT_PULLUP);
+    pinMode(PIN_DIP3, INPUT_PULLUP);
+    pinMode(LED_BUILTIN, OUTPUT); // note: LED builtin is also SCK for SPI
+    delayMicroseconds(3);
+    
+    // todo: watchdog configuration
 
     boolean neopixelsWorking = g_neopixel.begin();
     neopixel_handler("clear");
-
     boolean timersWorking = g_neopixelTimer.begin([]() -> void { neopixel_handler("_interrupt"); }, 50000);
     g_neopixelTimer.priority(254);
+    Entropy.Initialize();
 
-    Serial.begin(SERIAL_BAUD);
-    if (BATCH_WRITE_MODE || DEBUG_WAIT_FOR_SERIAL) {
-        while (!Serial)
+    // DIP reads inverted logic when input is pullup
+    dipSwitches = (!digitalRead(PIN_DIP1)<<2) | (!digitalRead(PIN_DIP2)<<1) | (!digitalRead(PIN_DIP3)<<0);
+
+    if ((dipSwitches&0b100) || (dipSwitches&0b010)) {
+        while (!Serial) {
             delay(10);
+        }
     }
 
     Serial.println("Serial Connected"); // if the statement isn't true, you aren't going to see it anyways
+    Serial.print("Firmware built on ");
+    Serial.println(COMPILE_TIME); // todo: unix epoch to date/time/timezone thing
 
     if (!timersWorking || !neopixelsWorking) {
         Serial.println("Neopixel/Timer failed initialization, cannot continue.");
@@ -563,19 +637,40 @@ void setup(void) {
             ; // HALT
     }
 
+    elapsedMillis sinceEntropyExpected;
+    while (!Entropy.available()) {
+        if (sinceEntropyExpected > 5000) {
+            // some issue with rng
+            // srandom will receive 0
+            Serial.println("Entropy RNG failure, continuing anyways");
+            break;
+        }
+    }
+    uint32_t randomSeed = Entropy.random();
+    Serial.print("Using random seed ");
+    Serial.println(randomSeed);
+    srandom(randomSeed);
+
+    Serial.print("DIP Config (debug|batchWrite|closePrev) = ");
+    Serial.print(dipSwitches, 2);
+    Serial.print("-");
+    Serial.println(dipSwitches);
+
     // setup all good
     g_neopixelTimer.end();
     neopixel_handler("success", 1000);
+
 }
 
 void loop(void) {
-    if (BATCH_WRITE_MODE) {
+    static boolean batch_write_complete = false;
+    if ((dipSwitches&0b010) && !batch_write_complete) {
         do_batchwrite();
-        while (1) {
-            // batch write complete
-            neopixel_handler("success", 1000);
-            neopixel_handler("busy", 1000);
-        }
+        neopixel_handler("busy", 1000);
+        Serial.println("Batch game writing is all done!");
+        neopixel_handler("success", 1000);
+        batch_write_complete = true;
     }
+
     do_launcher();
 }
