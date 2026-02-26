@@ -7,17 +7,19 @@
 
 #include "batch_game_list.h"
 
-#define PN532_SS              (10)
-#define DEBUG_WAIT_FOR_SERIAL (true)
-#define SERIAL_BAUD           (115200) // PN532 likes this to be the case in some instances
-#define NEOPIXEL_DATA         (2)
-#define WIN_RUN_WAIT          (500)
-#define BATCH_WRITE_MODE      (false)
+#define PN532_SS               (10)
+#define DEBUG_WAIT_FOR_SERIAL  (true)
+#define SERIAL_BAUD            (115200) // PN532 likes this to be the case in some instances
+#define NEOPIXEL_DATA          (2)
+#define WIN_RUN_WAIT           (500)
+#define BATCH_WRITE_MODE       (true)
+#define NPXL_LEN               (1) // 1 or 3
+#define CHIP_PEEK_POLLING_FREQ (5) // Hz, max 10 please
 
 const char *CUSTOM_ASCII_DELIMITER = "\xBF"; // upside down question mark delimiter
 
 // ### helper functions that can go in a header file. should not use globals, but defines ok
-
+// PN532 functions
 boolean init_pn532(Adafruit_PN532 *nfc, uint8_t limit_retries = 0xFF) {
     nfc->begin();
     uint32_t versiondata = nfc->getFirmwareVersion();
@@ -43,96 +45,6 @@ boolean init_pn532(Adafruit_PN532 *nfc, uint8_t limit_retries = 0xFF) {
     Serial.println(" retries during read-passives!");
 
     return true;
-}
-
-void await_userprompt() {
-    Serial.println("----");
-    Serial.println("Send a character to continue...");
-    Serial.flush();
-    while (!Serial.available())
-        ;
-    while (Serial.available()) {
-        Serial.read();
-    }
-    Serial.flush();
-}
-
-void pc_run_command(const char *s) {
-    // runs a powershell command through the run dialog
-    // powershell exits upon completion
-    Keyboard.releaseAll(); // reset
-
-    Keyboard.press(MODIFIERKEY_LEFT_GUI);
-    Keyboard.press(KEY_R);
-    Keyboard.release(KEY_R);
-    Keyboard.release(MODIFIERKEY_LEFT_GUI);
-    delay(WIN_RUN_WAIT); // time to hopefully open the RUN dialog
-    Keyboard.print("powershell.exe -Command \"");
-    Keyboard.print(s);
-    Keyboard.print("\"");
-    delay(17);
-    ; // wait for printing to complete?
-    Keyboard.press(KEY_ENTER);
-    Keyboard.release(KEY_ENTER);
-}
-
-void pc_kill_game(const char *appID, boolean just_alt_f4 = false) {
-    // close
-    // steam://open/console app_stop <appid> force:1
-    // windows+down to minimize
-    if (!strcmp(appID, "")) {
-        // first time running a game so the buffer hasn't been written
-        // do nothing
-        return;
-    }
-    if (!strcmp(appID, "-") || !strcmp(appID, "_")) {
-        // the game is not a steam game, do nothing unless altf4 is requested
-        if (just_alt_f4) {
-            Keyboard.releaseAll();
-            Keyboard.press(MODIFIERKEY_LEFT_ALT);
-            Keyboard.press(KEY_F4);
-            Keyboard.releaseAll();
-            return;
-        }
-    }
-    else {
-        // we have some steam appID
-        Keyboard.releaseAll();
-
-        Keyboard.press(MODIFIERKEY_LEFT_GUI);
-        Keyboard.press(KEY_R);
-        Keyboard.release(KEY_R);
-        Keyboard.release(MODIFIERKEY_LEFT_GUI);
-        delay(WIN_RUN_WAIT); // time to hopefully open the RUN dialog
-        Keyboard.print("steam://open/console");
-        delay(17); // wait for printing to complete?
-        Keyboard.press(KEY_ENTER);
-        Keyboard.release(KEY_ENTER);
-        delay(WIN_RUN_WAIT);     // time to hopefully open the steam console
-        Keyboard.press(KEY_TAB); // focus command bar
-        Keyboard.release(KEY_TAB);
-        // if the command bar was already in focus, it gets populated with 'undefined'; backspace it
-        Keyboard.press(MODIFIERKEY_LEFT_CTRL);
-        Keyboard.press(KEY_A);
-        Keyboard.release(KEY_A);
-        Keyboard.release(MODIFIERKEY_LEFT_CTRL);
-        Keyboard.press(KEY_BACKSPACE);
-        Keyboard.release(KEY_BACKSPACE);
-        // enter the command:
-        Keyboard.print("app_stop ");
-        Keyboard.print(appID);
-        Keyboard.print(" force:1");
-        delay(17); // wait for printing to complete?
-        // todo: check if this needs to be longer/can be shorter.
-        // the steam UI is weird and has variable response to key presses, sometimes its slower than windows
-        // so the window minimizes before the command is even executed.
-        Keyboard.press(KEY_ENTER);
-        Keyboard.release(KEY_ENTER);
-        Keyboard.press(MODIFIERKEY_LEFT_GUI);
-        Keyboard.press(KEY_DOWN);
-        Keyboard.release(KEY_DOWN);
-        Keyboard.release(MODIFIERKEY_LEFT_GUI);
-    }
 }
 
 uint8_t pn532_get_chip(Adafruit_PN532 *nfc, uint8_t *uid_buf) {
@@ -279,12 +191,102 @@ boolean readndefentry_ntag215(Adafruit_PN532 *nfc, uint8_t *data, uint16_t *data
     return false;
 }
 
+// misc functions
+void await_userprompt() {
+    Serial.println("----");
+    Serial.println("Send a character to continue...");
+    Serial.flush();
+    while (!Serial.available())
+        ;
+    while (Serial.available()) {
+        Serial.read();
+    }
+    Serial.flush();
+}
+
+void pc_run_command(const char *s) {
+    // runs a powershell command through the run dialog
+    // powershell exits upon completion
+    Keyboard.releaseAll(); // reset
+
+    Keyboard.press(MODIFIERKEY_LEFT_GUI);
+    Keyboard.press(KEY_R);
+    Keyboard.release(KEY_R);
+    Keyboard.release(MODIFIERKEY_LEFT_GUI);
+    delay(WIN_RUN_WAIT); // time to hopefully open the RUN dialog
+    Keyboard.print("powershell.exe -Command \"");
+    Keyboard.print(s);
+    Keyboard.print("\"");
+    delay(17);
+    ; // wait for printing to complete?
+    Keyboard.press(KEY_ENTER);
+    Keyboard.release(KEY_ENTER);
+}
+
+void pc_kill_game(const char *appID, boolean just_alt_f4 = false) {
+    // close
+    // steam://open/console app_stop <appid> force:1
+    // windows+down to minimize
+    if (!strcmp(appID, "")) {
+        // first time running a game so the buffer hasn't been written
+        // do nothing
+        return;
+    }
+    if (!strcmp(appID, "-") || !strcmp(appID, "_")) {
+        // the game is not a steam game, do nothing unless altf4 is requested
+        if (just_alt_f4) {
+            Keyboard.releaseAll();
+            Keyboard.press(MODIFIERKEY_LEFT_ALT);
+            Keyboard.press(KEY_F4);
+            Keyboard.releaseAll();
+            return;
+        }
+    }
+    else {
+        // we have some steam appID
+        Keyboard.releaseAll();
+
+        Keyboard.press(MODIFIERKEY_LEFT_GUI);
+        Keyboard.press(KEY_R);
+        Keyboard.release(KEY_R);
+        Keyboard.release(MODIFIERKEY_LEFT_GUI);
+        delay(WIN_RUN_WAIT); // time to hopefully open the RUN dialog
+        Keyboard.print("steam://open/console");
+        delay(17); // wait for printing to complete?
+        Keyboard.press(KEY_ENTER);
+        Keyboard.release(KEY_ENTER);
+        delay(WIN_RUN_WAIT);     // time to hopefully open the steam console
+        Keyboard.press(KEY_TAB); // focus command bar
+        Keyboard.release(KEY_TAB);
+        // if the command bar was already in focus, it gets populated with 'undefined'; backspace it
+        Keyboard.press(MODIFIERKEY_LEFT_CTRL);
+        Keyboard.press(KEY_A);
+        Keyboard.release(KEY_A);
+        Keyboard.release(MODIFIERKEY_LEFT_CTRL);
+        Keyboard.press(KEY_BACKSPACE);
+        Keyboard.release(KEY_BACKSPACE);
+        // enter the command:
+        Keyboard.print("app_stop ");
+        Keyboard.print(appID);
+        Keyboard.print(" force:1");
+        delay(17); // wait for printing to complete?
+        // todo: check if this needs to be longer/can be shorter.
+        // the steam UI is weird and has variable response to key presses, sometimes its slower than windows
+        // so the window minimizes before the command is even executed.
+        Keyboard.press(KEY_ENTER);
+        Keyboard.release(KEY_ENTER);
+        Keyboard.press(MODIFIERKEY_LEFT_GUI);
+        Keyboard.press(KEY_DOWN);
+        Keyboard.release(KEY_DOWN);
+        Keyboard.release(MODIFIERKEY_LEFT_GUI);
+    }
+}
+
 // ### my main functions, which can access these global variables
 
 Adafruit_PN532 g_nfc(PN532_SS); // Hardware SPI connection on Teensy 4.0: CS/SS=10, MOSI=11, MISO=12, SCK=13
-Adafruit_NeoPixel g_neopixel(1, NEOPIXEL_DATA, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel g_neopixel(NPXL_LEN, NEOPIXEL_DATA, NEO_GRB + NEO_KHZ800);
 IntervalTimer g_neopixelTimer;
-char gs_lastGame[24] = ""; // appID of the last run game
 
 void neopixel_handler(const char *mode, uint32_t min_show_ms = 0) {
     // Organize my neopixel calls into one neat function thats interrupt tolerant
@@ -307,12 +309,13 @@ void neopixel_handler(const char *mode, uint32_t min_show_ms = 0) {
     const int busyCheckPeriod           = 100000; // microseconds between each interrupt
 
     static elapsedMillis sinceBusyBlink;
-    static uint16_t busyBlinker     = 0;
+    static uint16_t busyBlinker     = NPXL_LEN / 2; // start at 0 unless you have 3 LEDS, then start at 1
     static boolean directionForward = true;
 
     uint8_t width = g_neopixel.numPixels();
 
     if ((char) toupper(mode[0]) != '_') {
+        busyBlinker = NPXL_LEN / 2; // reset index
         g_neopixelTimer.end();
     }
     switch ((char) toupper(mode[0])) {
@@ -368,42 +371,30 @@ void neopixel_handler(const char *mode, uint32_t min_show_ms = 0) {
     delay(min_show_ms);
 }
 
-void write_game_ntag215(const char *mode, const char *identifier, const char *flags) {
-    // NTAG215 Style up to like 240 bytes !
-    // all together, it looks like mode-delim-identifier-delim-vr_required-delim
-    char ndef_entry[241] = "";
-
-    strcpy(ndef_entry, mode);
-    strcat(ndef_entry, CUSTOM_ASCII_DELIMITER);
-    strcat(ndef_entry, identifier);
-    strcat(ndef_entry, CUSTOM_ASCII_DELIMITER);
-    strcat(ndef_entry, flags);
-
-    Serial.print("Preparing to write entry: ");
-    Serial.println(ndef_entry);
-    uint8_t uid[] = {0, 0, 0, 0, 0, 0, 0};
-    if (isndef_ntag2xx(&g_nfc, uid)) {
-        updatendef_ntag215(&g_nfc, uid, ndef_entry);
-    }
-}
-
 void do_batchwrite(void) {
+
+    elapsedMillis sinceLastPeek;
+    elapsedMillis sinceFullChipWrite;
+
+    neopixel_handler("waiting");
     Serial.println("Starting Batch Write");
     await_userprompt();
+    neopixel_handler("busy");
 
     // steam logic
     uint32_t game_index = 0;
     while (1) {
-        if (strlen_P(game_list[game_index]) < 1) {
+        if (strlen_P(P_game_list[game_index]) < 1) {
             // all games scanned
             break;
         }
 
         // get information about game
-        char gameString[240] = "";
-        strcpy_P(gameString, game_list[game_index]);
+        // 241 bytes to hold one ndef region record + null char terminator
+        char u_gameString_ndefEntry[241] = "";
+        strcpy_P(u_gameString_ndefEntry, P_game_list[game_index]);
         const char *mode = "VIASTEAM";
-        char *identifier = strstr(gameString, ":") + 1;
+        char *identifier = strstr(u_gameString_ndefEntry, ":") + 1;
         // insert nullchar at id end
         char *id_end       = strstr(identifier, ":");
         *id_end            = '\0';
@@ -411,36 +402,85 @@ void do_batchwrite(void) {
         if (*(id_end + 1) == 'Y') {
             strcpy(vr_required, "Y");
         }
-        // Confirm write
+
         Serial.print("Now writing: \"");
-        Serial.print(gameString);
+        Serial.print(u_gameString_ndefEntry);
         Serial.print("\" (ID=");
         Serial.print(identifier);
         Serial.print("), vr=");
         Serial.print(vr_required);
         Serial.println("");
 
-        await_userprompt();
+        neopixel_handler("waiting", 250); // gives you a little time to pull the previous game away, "debouncing"
+
+        boolean hasCartridge = false;
+        while (1) {
+            while (sinceLastPeek < 1000 / CHIP_PEEK_POLLING_FREQ) {
+                ;
+            }
+            hasCartridge  = pn532_peek(&g_nfc);
+            sinceLastPeek = 0;
+            if (sinceFullChipWrite > 500 && hasCartridge) {
+                sinceFullChipWrite = 0;
+                break;
+            }
+        }
+
         // write to chip
         neopixel_handler("busy");
-        write_game_ntag215(mode, identifier, vr_required);
-        neopixel_handler("success");
+        strcpy(u_gameString_ndefEntry, "");
 
-        game_index += 1;
+        strcpy(u_gameString_ndefEntry, mode);
+        strcat(u_gameString_ndefEntry, CUSTOM_ASCII_DELIMITER);
+        strcat(u_gameString_ndefEntry, identifier);
+        strcat(u_gameString_ndefEntry, CUSTOM_ASCII_DELIMITER);
+        strcat(u_gameString_ndefEntry, vr_required);
+        Serial.print("Preparing to write entry: ");
+        Serial.println(u_gameString_ndefEntry);
+
+        uint8_t uid[] = {0, 0, 0, 0, 0, 0, 0};
+        boolean success;
+        if ((success = isndef_ntag2xx(&g_nfc, uid))) {
+            success = updatendef_ntag215(&g_nfc, uid, u_gameString_ndefEntry);
+        }
+        if (success) {
+            neopixel_handler("success");
+            Serial.println("Prepare next cartridge");
+            while(pn532_peek(&g_nfc)) {
+                ;
+            }
+            game_index += 1;
+        }
+        else {
+            neopixel_handler("failure", 1000);
+            Serial.println("Error writing tag, retrying soon");
+        }
     }
 }
 
 void do_launcher(boolean dryRun = false) {
     // read and launch games
-    // assume i am the only function being called repeatedly
+    // assume this is the only function being called repeatedly
     // kills previously running game if necessary
     // only launches if a new game is placed on the reader
 
-    static elapsedMillis sinceLastChipRead;
+    static elapsedMillis sinceLastPeek;
+    static elapsedMillis sinceLastFullChipRead;
+    static char lastGame[24] = ""; // appID of the last run game
+
     neopixel_handler("waiting");
 
-    while (sinceLastChipRead < 500 && !pn532_peek(&g_nfc)) {
-        sinceLastChipRead = 0;
+    boolean hasCartridge = false;
+    while (1) {
+        while (sinceLastPeek < 1000 / CHIP_PEEK_POLLING_FREQ) {
+            ; // chill
+        }
+        hasCartridge  = pn532_peek(&g_nfc);
+        sinceLastPeek = 0;
+        if (sinceLastFullChipRead > 500 && hasCartridge) {
+            sinceLastFullChipRead = 0;
+            break;
+        }
     }
 
     uint8_t data[240];
@@ -451,7 +491,7 @@ void do_launcher(boolean dryRun = false) {
         neopixel_handler("failure", 1000);
     }
     else {
-        char mode = toupper(data[3]); // S(team), G(og), P(ath), D(olphin)...
+        char mode = toupper(data[3]); // v-i-a- S(team), G(og), P(ath), D(olphin)...
         switch (mode) {
         case 'S': {
             // steam game
@@ -465,12 +505,12 @@ void do_launcher(boolean dryRun = false) {
             uint8_t id_len                = id_end - id_start + 1;
             strncat(steamCommandBuf, id_start, id_len);
 
-            if (strncmp(gs_lastGame, id_start, id_len)) {
+            if (strncmp(lastGame, id_start, id_len)) {
                 // the game differs from the last game
-                // kill it so we can run our game instead
                 neopixel_handler("busy");
-                pc_kill_game(gs_lastGame);
-                strncpy(gs_lastGame, id_start, id_len);
+                pc_kill_game(lastGame); // kill it (if it was a steam game) so we can run our game instead
+
+                strncpy(lastGame, id_start, id_len);
                 Serial.print("RUNNING: ");
                 Serial.println(steamCommandBuf);
                 if (!dryRun) {
@@ -504,7 +544,7 @@ void setup(void) {
     g_neopixelTimer.priority(254);
 
     Serial.begin(SERIAL_BAUD);
-    if (DEBUG_WAIT_FOR_SERIAL) {
+    if (BATCH_WRITE_MODE || DEBUG_WAIT_FOR_SERIAL) {
         while (!Serial)
             delay(10);
     }
