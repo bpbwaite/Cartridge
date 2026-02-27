@@ -31,7 +31,7 @@ boolean init_pn532(Adafruit_PN532 *nfc, uint8_t limit_retries = 0xFF) {
     nfc->begin();
     uint32_t versiondata = nfc->getFirmwareVersion();
     if (!versiondata) {
-        Serial.print("Didn't find PN53x board");
+        Serial.println("Didn't find PN53x board");
         return false;
     }
     Serial.print("Found chip PN5");
@@ -296,6 +296,10 @@ IntervalTimer g_neopixelTimer;
 FastCRC8 g_CRC8;
 
 uint8_t dipSwitches = 0b000; // debug|batchWrite|closePrev
+
+void updateDipSwitches(void) {
+    dipSwitches = (!digitalRead(PIN_DIP1) << 2) | (!digitalRead(PIN_DIP2) << 1) | (!digitalRead(PIN_DIP3) << 0);
+}
 
 void neopixel_handler(const char *mode, uint32_t min_show_ms = 0) {
     // Organize my neopixel calls into one neat function thats interrupt tolerant
@@ -613,7 +617,7 @@ void setup(void) {
     Entropy.Initialize();
 
     // DIP reads inverted logic when input is pullup
-    dipSwitches = (!digitalRead(PIN_DIP1)<<2) | (!digitalRead(PIN_DIP2)<<1) | (!digitalRead(PIN_DIP3)<<0);
+    updateDipSwitches();
 
     if ((dipSwitches&0b100) || (dipSwitches&0b010)) {
         while (!Serial) {
