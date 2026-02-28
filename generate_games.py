@@ -1,40 +1,62 @@
 import os
 import shutil
-from PIL import Image
-from time import sleep, time
+from PIL import Image # pillow
+from math import ceil
+from time import time
 import re
 import requests
-import json
+import cv2 # opencv-python
+from random import random
 
-def getMyGamesAndNames(source: str) -> tuple[dict[str, str], dict[str, str]]:
-    games_by_name : dict[str, str] = {} # map name to appID
+def getMyGamesAndNames(source: str) -> dict[str, str]:
+    # return a dictionary mapping appIDs to names, stripping any special characters
     games_by_appID : dict[str, str] = {} # map appID to name
 
     appid_pattern = r'^\s*"appid"[^"]*"(\d*)"(?:.|\n)*"name"[^"]*"([^"]*)"'
     print("Scanning, please wait...")
-    for root, dirsnames, filesnames in os.walk(source):
-        for file in filesnames:
-            if file.startswith('appmanifest_') and file.endswith('.acf'):
-                with open(os.path.join(root, file), "r") as F:
-                    manifest = F.read()
-                    match = re.search(appid_pattern, manifest, re.MULTILINE | re.IGNORECASE)
-                    if not match:
-                        print("No match in file " + file)
-                    else:
-                        appid, name = match.groups()[0], match.groups()[1]
-                        games_by_name[name] = appid
-                        games_by_appID[appid] = name
+    files_and_dirs = os.listdir(source)
+    for file in files_and_dirs: # could be a dir
+        if file.startswith('appmanifest_') and file.endswith('.acf'): # having this extension all but guarantees its a file
+            #print(f'Reading {file}...')
+            with open(os.path.join(source, file), "r") as F:
+                manifest = F.read()
+                match = re.search(appid_pattern, manifest, re.MULTILINE | re.IGNORECASE)
+                if not match:
+                    print("No match in file " + file)
+                else:
+                    appid, name = match.groups()[0], match.groups()[1]                    
+                    games_by_appID[appid] = name
+    
     print("Scan Complete")
-    return (games_by_appID, games_by_name)
+    return games_by_appID
 
-def getImages(platform: str, source: str, cachefolder: str = "dummy"):
+def no_misc_games(all_games: dict) -> dict:
+    filter_out = {'SteamLinuxRuntime', 'Soundtrack', ' Demo', 'ProtonExperimental', 'Proton90', 'tModLoader'}
+    # filter out soundtracks, demos
+    for gameID in list(all_games):
+        gameName = all_games[gameID]
+        for filt in filter_out:
+            if filt in gameName:
+                print('Skipping ' + gameName)
+                all_games.pop(gameID)
+    return all_games
 
-    games_by_appID, games_by_name = getMyGamesAndNames(source)
-    print('Acquired real games list')
+def make_ascii_compatible(all_games: dict) -> dict:
+    # remove non ascii and then non alnum chars
+    # not ascii encoding first has led to some chars like (R) slipping through
+    for gameID in list(all_games):
+        name = all_games[gameID]
+        name = name.encode("ascii", errors='ignore').decode("utf-8", errors='ignore')
+        name = ''.join(c for c in name if c.isalpha())
+        all_games.pop(gameID)
+        all_games[gameID] = name
+    
+    return all_games
+
+def getImages(platform: str, source: str, games_by_appID: dict[str, str] = {}, cachefolder: str = "dummy"):
 
     platform = platform.lower().strip()
-    gogpath = 'C:\\ProgramData\\GOG.com\\Galaxy'
-    steampath = 'C:\\Program Files (x86)\\Steam'
+    #gogpath = 'C:\\ProgramData\\GOG.com\\Galaxy'
     
     # clear and rebuild the image cache
     dest_path = os.path.join(os.getcwd(), cachefolder)
@@ -43,8 +65,9 @@ def getImages(platform: str, source: str, cachefolder: str = "dummy"):
     os.mkdir(cachefolder)
 
     if platform == 'steam':
-        steampath = os.path.join(steampath, 'appcache\\librarycache')
-        for root, dirs, files in os.walk(steampath):
+        source = os.path.join(source, 'appcache\\librarycache')
+        last = '' # prevent printing the same cached-store-game multiple times
+        for root, dirs, files in os.walk(source):
             for file in files:
                 if file.endswith('.jpg'):
                     with Image.open(os.path.join(root, file)) as im:
@@ -55,21 +78,108 @@ def getImages(platform: str, source: str, cachefolder: str = "dummy"):
                                     shutil.copy(os.path.join(root, file), dest_path)
                                     if im.size == (32, 32):
                                         shutil.move(os.path.join(dest_path, file), os.path.join(dest_path, (games_by_appID[appID][:5] + '_' + appID + '_icon.jpg')))
-                                        print(f"copied {file} to {dest_path}\\{games_by_appID[appID] + '_' + appID + '_icon.jpg'}")
+                                        #print(f"Copied {file} to {dest_path}\\{games_by_appID[appID] + '_' + appID + '_icon.jpg'}")
                                     else:
                                         shutil.move(os.path.join(dest_path, file), os.path.join(dest_path, (games_by_appID[appID][:5] + '_' + appID + '_lib.jpg')))
-                                        print(f"copied {file} to {dest_path}\\{games_by_appID[appID] + '_' + appID + '_lib.jpg'}")
+                                        #print(f"Copied {file} to {dest_path}\\{games_by_appID[appID] + '_' + appID + '_lib.jpg'}")
                                 elif appID.isdecimal() and not appID in games_by_appID:
-                                    print("Game found, but it's not installed: " + appID + " (could be cached from the store)")
+                                    if appID != last:
+                                        print("Partial game found - it's not installed: " + appID + " (could be cached from the store)")
+                                    last = appID
                     
     
     elif platform == 'gog':
-        gogpath += '\\webcache'
+        pass
+        #gogpath += '\\webcache'
         # res = (342, 482)
         # todo: implement gog support
 
+def draw_grid_on_background(bg, images, rows, cols, start_x=0, start_y=0, pad_x=0, pad_y=0, rotation=0):
+    assert rotation in (0, 90, 180, 270)
+
+    rot_map = {
+        0: None,
+        90: cv2.ROTATE_90_CLOCKWISE,
+        180: cv2.ROTATE_180,
+        270: cv2.ROTATE_90_COUNTERCLOCKWISE
+    }
+
+    out = bg.copy()
+
+    # assume same size after rotation
+    sample = images[0]
+    if rotation != 0:
+        sample = cv2.rotate(sample, rot_map[rotation])
+    h, w = sample.shape[:2]
+
+    for idx, img in enumerate(images):
+        r = idx // cols
+        c = idx % cols
+        if r >= rows:
+            break
+
+        tile = img.copy()
+
+        # rotate first
+        if rotation != 0:
+            tile = cv2.rotate(tile, rot_map[rotation])
+
+        x = start_x + c * (w + pad_x)
+        y = start_y + r * (h + pad_y)
+
+        out[y:y+h, x:x+w] = tile
+
+    return out
+
+def generatePrintableImageGrids(source: str) -> None:
+    page = 0
+    paths_lib = sorted([os.path.join(source, iname) for iname in os.listdir(source) if '_lib.jpg' in iname])
+    # build icons indirectly from library to avoid duplicates/mismatches
+    paths_ico = sorted([os.path.join(source, iname.replace('_lib', '_icon')) for iname in os.listdir(source) if '_lib.jpg' in iname])
+    background = cv2.imread("template.png")
+    max_pages: int = ceil(len(paths_lib) / 42)
+    
+    while(True):
+        # collect a set of images
+        if page == max_pages: # todo: break when actual limit reached
+            break
+        
+        path_set = paths_lib[(page*42) : (page*42+42)]
+        # get library cards, scale if necessary
+        tiles = [cv2.resize(cv2.imread(p), (300, 450), interpolation=cv2.INTER_NEAREST) for p in path_set] # type: ignore
+        # do multiple times per group
+        result = draw_grid_on_background(
+            bg=background,
+            images=tiles,
+            rows=7,
+            cols=6,
+            start_x=137,
+            start_y=72,
+            pad_x=70,
+            pad_y=2,
+            rotation=0
+        )
+
+        path_set = paths_ico[(page*42) : (page*42+42)]
+        # get icons and scale them 
+        tiles = [cv2.resize(cv2.imread(p), (64, 64), interpolation=cv2.INTER_NEAREST) for p in path_set] # type: ignore
+        result = draw_grid_on_background(
+            bg=result,
+            images=tiles,
+            rows=7,
+            cols=6,
+            start_x=69,
+            start_y=95,
+            pad_x=306,
+            pad_y=388,
+            rotation=90
+        )
+
+        cv2.imwrite(f"output_p{page+1}.png", result)
+        page += 1
+
 def isSteamGameVR(appID: str) -> bool:
-    # max call speed: rate limit 100k/d is ~ every 864 ms
+    # max call speed: rate limit is 200 calls per 5min (every 667 ms) or 100k/d (every 864 ms) whichever is hit first
     response = requests.get(f'https://store.steampowered.com/api/appdetails?appids={appID}')
     if response.status_code != 200:
         raise Exception
@@ -85,40 +195,71 @@ def isSteamGameVR(appID: str) -> bool:
             print(f"App {data['name']} ({appID}) has no category/feature tags (probably a soundtrack), ignoring VR options.")
     return False
 
-def buildGameList(source: str):
-    games_by_appID, games_by_name = getMyGamesAndNames(source)
+def buildGameList(games_by_appID: dict[str, str], doRequests: bool = False):
     
+    appIDListLimit = 128 # list limit for the random games section, not a hard library size limit
+    rate_limit = 0.01
+    if doRequests:
+        rate_limit = 0.668
+        print('Writing header file, this may take a moment...')
+    else:
+        print('Writing header file')
+
     with open('batch_game_list.h', 'wt') as F:
         F.write('#pragma once\n')
-        F.write('#include <Arduino.h>\n')
-        F.write('static const char *P_game_list[] PROGMEM = {\n')
+        F.write('#include <Arduino.h>\n\n')
         
+        F.write('static const char * const P_game_list[] PROGMEM = {\n')
         time_of_last_request = 0
+        counter = 0
+        vr_counter = 0
         for appID in games_by_appID:
-            g = ''.join(c for c in games_by_appID[appID] if c.isalnum())
-            # filter out soundtracks, demos 
-            if ' soundtrack' in g.lower() or ' demo' in g.lower():
-                print('Skipping ' + g + ' because it is a soundtrack or demo game')
-                continue
+            counter = counter + 1
+            print(f'\r({counter}/{len(games_by_appID)})', end="")
+            
+            gameName = games_by_appID[appID]
             
             # rate limit
-            # rate_limit = 0.864
-            rate_limit = 0
             while time() - time_of_last_request < rate_limit:
-                pass # wait
+                pass
             time_of_last_request = time()
-            vr = "Y" if isSteamGameVR(appID=appID) else "N"
-            F.write(f'\t"{g}:{appID}:{vr}",\n')
-        
+            vr = "N"
+            if doRequests:
+                if isSteamGameVR(appID=appID):
+                    vr = "Y"
+                    vr_counter += 1
+            F.write(f'\t"{gameName}:{appID}:{vr}",\n')
+            games_by_appID[appID] += 'VR=TRUE' # reuse this dictionary, could be dangerous, we'll see
+
+        print()
         F.write('\t"\\0"\n')
         F.write('};\n')
-    print('Build games list: complete')
+
+        # write non-vr games to the random eeprom
+        F.write('static const uint32_t PROGMEM P_appID_list[] = {\n')
+        for i, appID in enumerate(sorted(list(games_by_appID), key=lambda _: random())):
+            if i >= appIDListLimit:
+                break
+            if 'VR=TRUE' in games_by_appID[appID]:
+                print(f'Skipped writing {games_by_appID[appID]} to random games list')
+                appIDListLimit += 1 # try for a different game
+                continue
+            F.write(f'{appID},')
+        F.write('\n};\n\n')
+
+    print(f'Build games list: complete. ({counter} games, {vr_counter} tagged as using VR)')
 
 def main():
-
-    #getImages('steam', 'G:\\Games\\Steam\\steamapps', 'images')
-    #buildGameList('G:\\Games\\Steam\\steamapps')
-    buildGameList('C:\\Program Files (x86)\\Steam\\steamapps')
+    steam_install_path = 'C:\\Program Files (x86)\\Steam'
+    steam_library_path = 'G:\\Games\\Steam\\steamapps'
+    need_VR_tags = False
+    
+    games_by_appID = make_ascii_compatible(no_misc_games(getMyGamesAndNames(steam_library_path)))
+    print('Acquired real installed games list')
+    
+    getImages('steam', steam_install_path, games_by_appID, 'images')
+    generatePrintableImageGrids('.\\images')
+    buildGameList(games_by_appID, doRequests=need_VR_tags)
 
 if __name__ == '__main__':
     main()
