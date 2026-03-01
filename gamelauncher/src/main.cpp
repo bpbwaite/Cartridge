@@ -294,7 +294,14 @@ void do_launcher(boolean dryRun = false) {
                 // check if the game identifier is 'random' and launch a random game instead
                 if (!strncmp("RANDOM", id_start, id_len)) {
                     char appIDitoa_buf[APPID_BUFS_MAX];
-                    itoa(get_random_gameID(), appIDitoa_buf, 10);
+                    uint32_t randomID = get_random_gameID();
+                    if (randomID == 0) {
+                        // random games list wasn't set up properly
+                        Serial.println("Issue with random games list");
+                        neopixel_handler("failure", NPXL_NOTIF_LENGTH);
+                        break;
+                    }
+                    itoa(randomID, appIDitoa_buf, 10);
                     strcat(steamCommandBuf, appIDitoa_buf);
                     if (!dryRun && (dipSwitches & 0b001)) {
                         pc_kill_game(lastGame);
@@ -314,7 +321,7 @@ void do_launcher(boolean dryRun = false) {
                 if (!dryRun) {
                     pc_run_command(steamCommandBuf);
                 }
-                neopixel_handler("success");
+                neopixel_handler("success", NPXL_NOTIF_LENGTH);
             }
             else {
                 Serial.println("Waiting (same game on reader)");
