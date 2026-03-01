@@ -1,6 +1,6 @@
 import os
 import shutil
-from PIL import Image # pillow
+from PIL import Image # pillow todo: replace with opencv
 from math import ceil
 from time import time
 import re
@@ -228,8 +228,8 @@ def buildGameList(games_by_appID: dict[str, str], doRequests: bool = False):
                 if isSteamGameVR(appID=appID):
                     vr = "Y"
                     vr_counter += 1
+                    games_by_appID[appID] += '_VR=TRUE' # reuse this dictionary, could be dangerous, we'll see
             F.write(f'\t"{gameName}:{appID}:{vr}",\n')
-            games_by_appID[appID] += 'VR=TRUE' # reuse this dictionary, could be dangerous, we'll see
 
         print()
         F.write('\t"\\0"\n')
@@ -240,11 +240,11 @@ def buildGameList(games_by_appID: dict[str, str], doRequests: bool = False):
         for i, appID in enumerate(sorted(list(games_by_appID), key=lambda _: random())):
             if i >= appIDListLimit:
                 break
-            if 'VR=TRUE' in games_by_appID[appID]:
+            if '_VR=TRUE' in games_by_appID[appID]:
                 print(f'Skipped writing {games_by_appID[appID]} to random games list')
                 appIDListLimit += 1 # try for a different game
                 continue
-            F.write(f'{appID},')
+            F.write(f'{appID}, ')
         F.write('\n};\n\n')
 
     print(f'Build games list: complete. ({counter} games, {vr_counter} tagged as using VR)')
