@@ -3,7 +3,7 @@ __pycache__/
 
 images*/*.jpg
 old/
-notes.txt
+gamelauncher/include/batch_game_list_local.h
 
 .env
 .envrc

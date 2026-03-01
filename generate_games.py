@@ -13,7 +13,9 @@ def getMyGamesAndNames(source: str) -> dict[str, str]:
     games_by_appID : dict[str, str] = {} # map appID to name
 
     appid_pattern = r'^\s*"appid"[^"]*"(\d*)"(?:.|\n)*"name"[^"]*"([^"]*)"'
+    
     print("Scanning, please wait...")
+    source += '/steamapps'
     files_and_dirs = os.listdir(source)
     for file in files_and_dirs: # could be a dir
         if file.startswith('appmanifest_') and file.endswith('.acf'): # having this extension all but guarantees its a file
@@ -106,7 +108,6 @@ def draw_grid_on_background(bg, images, rows, cols, start_x=0, start_y=0, pad_x=
 
     out = bg.copy()
 
-    # assume same size after rotation
     sample = images[0]
     if rotation != 0:
         sample = cv2.rotate(sample, rot_map[rotation])
@@ -119,8 +120,6 @@ def draw_grid_on_background(bg, images, rows, cols, start_x=0, start_y=0, pad_x=
             break
 
         tile = img.copy()
-
-        # rotate first
         if rotation != 0:
             tile = cv2.rotate(tile, rot_map[rotation])
 
@@ -136,7 +135,7 @@ def generatePrintableImageGrids(source: str) -> None:
     paths_lib = sorted([os.path.join(source, iname) for iname in os.listdir(source) if '_lib.jpg' in iname])
     # build icons indirectly from library to avoid duplicates/mismatches
     paths_ico = sorted([os.path.join(source, iname.replace('_lib', '_icon')) for iname in os.listdir(source) if '_lib.jpg' in iname])
-    background = cv2.imread("template.png")
+    background = cv2.imread("template.png")# todo: generate the template from code
     max_pages: int = ceil(len(paths_lib) / 42)
     
     while(True):
@@ -250,15 +249,15 @@ def buildGameList(games_by_appID: dict[str, str], doRequests: bool = False):
     print(f'Build games list: complete. ({counter} games, {vr_counter} tagged as using VR)')
 
 def main():
-    steam_install_path = 'C:\\Program Files (x86)\\Steam'
-    steam_library_path = 'G:\\Games\\Steam\\steamapps'
+    steam_install_path = 'C:/Program Files (x86)/Steam'
+    steam_library_path = 'G:/Games/Steam'
     need_VR_tags = False
     
     games_by_appID = make_ascii_compatible(no_misc_games(getMyGamesAndNames(steam_library_path)))
     print('Acquired real installed games list')
     
     getImages('steam', steam_install_path, games_by_appID, 'images')
-    generatePrintableImageGrids('.\\images')
+    generatePrintableImageGrids('./images')
     buildGameList(games_by_appID, doRequests=need_VR_tags)
 
 if __name__ == '__main__':
