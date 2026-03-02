@@ -8,6 +8,8 @@ import requests
 import numpy as np
 import cv2 # opencv-python
 
+# todo: unify function naming convention to camelCase, invent clever variable names
+
 def getMyGamesAndNames(source: str) -> dict[str, str]:
     # return a dictionary mapping appIDs to names, stripping any special characters
     games_by_appID : dict[str, str] = {} # map appID to name
@@ -268,8 +270,8 @@ def main():
     games_by_appID = make_ascii_compatible(no_misc_games(getMyGamesAndNames(steam_library_path)))
     print('Acquired real installed games list')
     
-    getImages('steam', steam_install_path, games_by_appID, 'images')
-    generatePrintableImageGrids('./images')
+    getImages('steam', steam_install_path, games_by_appID, './generated_images')
+    generatePrintableImageGrids('./generated_images')
     buildGameList(games_by_appID, doRequests=need_VR_tags)
 
 if __name__ == '__main__':

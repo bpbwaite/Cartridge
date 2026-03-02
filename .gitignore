@@ -1,9 +1,10 @@
 __pycache__/
 .vscode/
 
-images*/*.jpg
-old/
+generated_images*/*.jpg
 cartridge-firmware/include/batch_game_list_local.h
+
+old/
 
 .env
 .envrc
