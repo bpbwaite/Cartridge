@@ -3,6 +3,7 @@
 #include <FastCRC.h>
 
 #include <Adafruit_NeoPixel.h>
+#include <Adafruit_PN532.h>
 
 #include "config.h"
 #include "batch_game_list.h"

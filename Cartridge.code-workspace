@@ -4,7 +4,7 @@
 			"path": "."
 		},
 		{
-			"path": "gamelauncher"
+			"path": "cartridge-firmware"
 		}
 	],
 	"settings": {}

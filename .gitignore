@@ -3,7 +3,7 @@ __pycache__/
 
 images*/*.jpg
 old/
-gamelauncher/include/batch_game_list_local.h
+cartridge-firmware/include/batch_game_list_local.h
 
 .env
 .envrc
