@@ -1,12 +1,12 @@
 import os
 import shutil
-from PIL import Image # pillow todo: replace with opencv
-from math import ceil
-from time import time
+from math import floor, ceil
+from time import time, sleep
+from random import random
 import re
 import requests
+import numpy as np
 import cv2 # opencv-python
-from random import random
 
 def getMyGamesAndNames(source: str) -> dict[str, str]:
     # return a dictionary mapping appIDs to names, stripping any special characters
@@ -33,14 +33,17 @@ def getMyGamesAndNames(source: str) -> dict[str, str]:
     return games_by_appID
 
 def no_misc_games(all_games: dict) -> dict:
-    filter_out = {'SteamLinuxRuntime', 'Soundtrack', ' Demo', 'ProtonExperimental', 'Proton90', 'tModLoader'}
     # filter out soundtracks, demos
+    filter_out = {'SteamLinuxRuntime', 'Soundtrack', ' Demo', 'ProtonExperimental', 'Proton90', 'tModLoader'}
+    skipped_games = []
     for gameID in list(all_games):
         gameName = all_games[gameID]
         for filt in filter_out:
             if filt in gameName:
-                print('Skipping ' + gameName)
+                skipped_games.append(gameName)
                 all_games.pop(gameID)
+    if len(skipped_games) > 0:
+        print(f'Skipping these: {skipped_games}')
     return all_games
 
 def make_ascii_compatible(all_games: dict) -> dict:
@@ -56,7 +59,9 @@ def make_ascii_compatible(all_games: dict) -> dict:
     return all_games
 
 def getImages(platform: str, source: str, games_by_appID: dict[str, str] = {}, cachefolder: str = "dummy"):
-
+    def flatten_list(xss):
+        return [x for xs in xss for x in xs]
+    
     platform = platform.lower().strip()
     #gogpath = 'C:\\ProgramData\\GOG.com\\Galaxy'
     
@@ -67,27 +72,29 @@ def getImages(platform: str, source: str, games_by_appID: dict[str, str] = {}, c
     os.mkdir(cachefolder)
 
     if platform == 'steam':
-        source = os.path.join(source, 'appcache\\librarycache')
-        last = '' # prevent printing the same cached-store-game multiple times
+        source = os.path.join(source, 'appcache/librarycache')
+        partials = set()
         for root, dirs, files in os.walk(source):
             for file in files:
                 if file.endswith('.jpg'):
-                    with Image.open(os.path.join(root, file)) as im:
-                        if im.size == (32, 32) or file.endswith('600x900.jpg') or file.endswith('_capsule.jpg'):
-                            appIDcandidates = [root.split("\\")[-1], root.split("\\")[-2], root.split("\\")[-3]]
-                            for appID in appIDcandidates:
-                                if appID in games_by_appID:
-                                    shutil.copy(os.path.join(root, file), dest_path)
-                                    if im.size == (32, 32):
-                                        shutil.move(os.path.join(dest_path, file), os.path.join(dest_path, (games_by_appID[appID][:5] + '_' + appID + '_icon.jpg')))
-                                        #print(f"Copied {file} to {dest_path}\\{games_by_appID[appID] + '_' + appID + '_icon.jpg'}")
-                                    else:
-                                        shutil.move(os.path.join(dest_path, file), os.path.join(dest_path, (games_by_appID[appID][:5] + '_' + appID + '_lib.jpg')))
-                                        #print(f"Copied {file} to {dest_path}\\{games_by_appID[appID] + '_' + appID + '_lib.jpg'}")
-                                elif appID.isdecimal() and not appID in games_by_appID:
-                                    if appID != last:
-                                        print("Partial game found - it's not installed: " + appID + " (could be cached from the store)")
-                                    last = appID
+                    im = cv2.imread(os.path.join(root, file))
+                    assert im is not None
+                    im_h, im_w = im.shape[:2]
+                    if (im_h, im_w) == (32, 32) or file.endswith('600x900.jpg') or file.endswith('_capsule.jpg'):
+                        # when we find an image, we don't know what search depth is at
+                        appIDcandidates = flatten_list([d.split("/") for d in root.split("\\")])
+                        for appID in appIDcandidates:
+                            if appID in games_by_appID:
+                                shutil.copy(os.path.join(root, file), dest_path)
+                                if (im_h, im_w) == (32, 32):
+                                    shutil.move(os.path.join(dest_path, file), os.path.join(dest_path, (games_by_appID[appID][:5] + '_' + appID + '_icon.jpg')))
+                                else:
+                                    shutil.move(os.path.join(dest_path, file), os.path.join(dest_path, (games_by_appID[appID][:5] + '_' + appID + '_lib.jpg')))
+                            elif appID.isdecimal() and not appID in games_by_appID:
+                                if not (appID in partials):
+                                    partials.add(appID)
+        if len(partials) > 0:
+            print(f"{len(partials)} partial games found and skipped (they are not installed, and they could be cached data from the store)")
                     
     
     elif platform == 'gog':
@@ -131,18 +138,21 @@ def draw_grid_on_background(bg, images, rows, cols, start_x=0, start_y=0, pad_x=
     return out
 
 def generatePrintableImageGrids(source: str) -> None:
+    width = floor(300*8.5) # us-letter
+    height = floor(300*11) # us-letter
     page = 0
     paths_lib = sorted([os.path.join(source, iname) for iname in os.listdir(source) if '_lib.jpg' in iname])
     # build icons indirectly from library to avoid duplicates/mismatches
     paths_ico = sorted([os.path.join(source, iname.replace('_lib', '_icon')) for iname in os.listdir(source) if '_lib.jpg' in iname])
-    background = cv2.imread("template.png")# todo: generate the template from code
+    background = np.ones((height, width, 3), dtype=np.uint8) * 255 # basic, all white 
     max_pages: int = ceil(len(paths_lib) / 42)
     
     while(True):
         # collect a set of images
         if page == max_pages: # todo: break when actual limit reached
             break
-        
+        print(f'Creating sheet {page+1} of {max_pages}')
+
         path_set = paths_lib[(page*42) : (page*42+42)]
         # get library cards, scale if necessary
         tiles = [cv2.resize(cv2.imread(p), (300, 450), interpolation=cv2.INTER_NEAREST) for p in path_set] # type: ignore
@@ -174,7 +184,7 @@ def generatePrintableImageGrids(source: str) -> None:
             rotation=90
         )
 
-        cv2.imwrite(f"output_p{page+1}.png", result)
+        cv2.imwrite(f"sheet_p{page+1}.png", result)
         page += 1
 
 def isSteamGameVR(appID: str) -> bool:
@@ -205,7 +215,8 @@ def buildGameList(games_by_appID: dict[str, str], doRequests: bool = False):
         print('Writing header file')
 
     with open('batch_game_list.h', 'wt') as F:
-        F.write('#pragma once\n')
+        F.write('#ifndef BATCH_GAME_LIST_H\n')
+        F.write('#define BATCH_GAME_LIST_H\n\n')
         F.write('#include <Arduino.h>\n\n')
         
         F.write('static const char * const P_game_list[] PROGMEM = {\n')
@@ -245,6 +256,7 @@ def buildGameList(games_by_appID: dict[str, str], doRequests: bool = False):
                 continue
             F.write(f'{appID}, ')
         F.write('\n};\n\n')
+        F.write('#endif\n')
 
     print(f'Build games list: complete. ({counter} games, {vr_counter} tagged as using VR)')
 
