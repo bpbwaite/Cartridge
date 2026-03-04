@@ -1,0 +1,12 @@
+[project]
+
+name="Cartridge"
+version=0.1.0
+description="Tools for the creation of a simulated physical game library"
+requires-python = ">=3.11.9"
+
+dependencies = [
+    "numpy>=2.4.2"
+    "opencv-python>=4.13.0.92"
+    "requests>=2.32.5"
+]
