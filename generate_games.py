@@ -8,8 +8,9 @@ import requests
 import numpy as np
 import cv2 # opencv-python
 
-# todo: unify function naming convention to camelCase, invent clever variable names
+# todo: invent clever variable names
 # todo: use globs where appropriate
+# todo: send the built game list, including randoms, over usb to the teensy so we can have one unified firmware image.
 
 def getMyGamesAndNames(source: str) -> dict[str, str]:
     # return a dictionary mapping appIDs to names, stripping any special characters
@@ -35,11 +36,11 @@ def getMyGamesAndNames(source: str) -> dict[str, str]:
     print("Scan Complete")
     return games_by_appID
 
-def no_misc_games(all_games: dict) -> dict:
-    # filter out soundtracks, demos
-    filter_out = {'SteamLinuxRuntime', ' Soundtrack', ' Demo', 'ProtonExperimental', 'Proton90', 'tModLoader'}
+def removeMiscGames(all_games: dict) -> dict:
+    # filter out soundtracks, demos, tools
+    filter_out = {"SteamLinuxRuntime", " Soundtrack", " Demo", "ProtonExperimental", "Proton90", "tModLoader"}
     # more aggressive filters for tools
-    filter_out2 = {'3DMark', 'Natural Locomotion', 'Wallpaper Engine'}
+    filter_out2 = {"3DMark", "Natural Locomotion", "Wallpaper Engine", "Friend's Pass"}
     
     skipped_games = []
     for gameID in list(all_games):
@@ -52,7 +53,7 @@ def no_misc_games(all_games: dict) -> dict:
         print(f'Skipping these: {skipped_games}')
     return all_games
 
-def make_ascii_compatible(all_games: dict) -> dict:
+def asciiify(all_games: dict) -> dict:
     # remove non ascii and then non alnum chars
     # not ascii encoding first has led to some chars like (R) slipping through
     for gameID in list(all_games):
@@ -109,43 +110,41 @@ def getImages(platform: str, source: str, games_by_appID: dict[str, str] = {}, c
         # res = (342, 482)
         # todo: implement gog support
 
-def draw_grid_on_background(bg, images, rows, cols, start_x=0, start_y=0, pad_x=0, pad_y=0, rotation=0):
-    assert rotation in (0, 90, 180, 270)
+def generatePrintableImageGrids(source: str, width: int = floor(300*8.5), height: int = floor(300*11)) -> int:
+    # default w x h is us-letter
+    # made specifically for a 6x7 grid of 300x450 images with icons
+    def drawGrid(bg, images, rows, cols, start_x=0, start_y=0, pad_x=0, pad_y=0, rotation=0):
+        assert rotation in (0, 90, 180, 270)
+        rot_map = {
+            0: None,
+            90: cv2.ROTATE_90_CLOCKWISE,
+            180: cv2.ROTATE_180,
+            270: cv2.ROTATE_90_COUNTERCLOCKWISE
+        }
 
-    rot_map = {
-        0: None,
-        90: cv2.ROTATE_90_CLOCKWISE,
-        180: cv2.ROTATE_180,
-        270: cv2.ROTATE_90_COUNTERCLOCKWISE
-    }
-
-    out = bg.copy()
-
-    sample = images[0]
-    if rotation != 0:
-        sample = cv2.rotate(sample, rot_map[rotation])
-    h, w = sample.shape[:2]
-
-    for idx, img in enumerate(images):
-        r = idx // cols
-        c = idx % cols
-        if r >= rows:
-            break
-
-        tile = img.copy()
+        out = bg.copy()
+        sample = images[0]
+        
         if rotation != 0:
-            tile = cv2.rotate(tile, rot_map[rotation])
+            sample = cv2.rotate(sample, rot_map[rotation])
+        h, w = sample.shape[:2]
 
-        x = start_x + c * (w + pad_x)
-        y = start_y + r * (h + pad_y)
+        for idx, img in enumerate(images):
+            r = idx // cols
+            c = idx % cols
+            if r >= rows:
+                break
 
-        out[y:y+h, x:x+w] = tile
+            tile = img.copy()
+            if rotation != 0:
+                tile = cv2.rotate(tile, rot_map[rotation])
 
-    return out
+            x = start_x + c * (w + pad_x)
+            y = start_y + r * (h + pad_y)
+            out[y:y+h, x:x+w] = tile
 
-def generatePrintableImageGrids(source: str) -> None:
-    width = floor(300*8.5) # us-letter
-    height = floor(300*11) # us-letter
+        return out
+
     page = 0
     paths_lib = sorted([os.path.join(source, iname) for iname in os.listdir(source) if '_lib.jpg' in iname])
     # build icons indirectly from library to avoid duplicates/mismatches
@@ -162,8 +161,7 @@ def generatePrintableImageGrids(source: str) -> None:
         path_set = paths_lib[(page*42) : (page*42+42)]
         # get library cards, scale if necessary
         tiles = [cv2.resize(cv2.imread(p), (300, 450), interpolation=cv2.INTER_NEAREST) for p in path_set] # type: ignore
-        # do multiple times per group
-        result = draw_grid_on_background(
+        result = drawGrid(
             bg=background,
             images=tiles,
             rows=7,
@@ -175,10 +173,24 @@ def generatePrintableImageGrids(source: str) -> None:
             rotation=0
         )
 
+        # create bridges, a 4x64 strip on the left side to cover the gap between the icon
+        tiles = [cv2.GaussianBlur(t[ 23:(23+64), :4], (3, 3), sigmaX=0, borderType=cv2.BORDER_WRAP) for t in tiles]
+        result = drawGrid(
+            bg=result,
+            images=tiles,
+            rows=7,
+            cols=6,
+            start_x=133,
+            start_y=95,
+            pad_x=366,
+            pad_y=388,
+            rotation=0
+        )
+
         path_set = paths_ico[(page*42) : (page*42+42)]
         # get icons and scale them 
         tiles = [cv2.resize(cv2.imread(p), (64, 64), interpolation=cv2.INTER_NEAREST) for p in path_set] # type: ignore
-        result = draw_grid_on_background(
+        result = drawGrid(
             bg=result,
             images=tiles,
             rows=7,
@@ -192,6 +204,8 @@ def generatePrintableImageGrids(source: str) -> None:
 
         cv2.imwrite(f"sheet_p{page+1}.png", result)
         page += 1
+
+    return max_pages
 
 def isSteamGameVR(appID: str) -> bool:
     # max call speed: rate limit is 200 calls per 5min (every 667 ms) or 100k/d (every 864 ms) whichever is hit first
@@ -264,20 +278,36 @@ def buildGameList(games_by_appID: dict[str, str], doRequests: bool = False):
         F.write('\n};\n\n')
         F.write('#endif\n')
 
-    print(f'Build games list: complete. ({counter} games, {vr_counter} tagged as using VR)')
+    print(f'Exported {counter} games, {vr_counter} tagged as using VR')
 
 def main():
-    steam_install_path = 'C:/Program Files (x86)/Steam'
-    steam_library_path = 'C:/Program Files (x86)/Steam'
-    #steam_library_path = 'G:/Games/Steam'
+
+    # get installation path variables from user
+    default_steampaths = 'C:/Program Files (x86)/Steam'
+    yes = {'y', 'yes'}
+    steam_install_path = input('Is Steam installed at "' + default_steampaths + '"? (y/n) >> ')
+    if steam_install_path.lower() in yes:
+        steam_install_path = default_steampaths
+    else:
+        steam_install_path = input('Enter the location of your Steam install, e.g. G:/Programs/Steam\n>> ')
+    steam_library_path = input('Are your Steam games installed at "' + default_steampaths + '"? (y/n) >> ')
+    if steam_library_path.lower() in yes:
+        steam_library_path = default_steampaths
+    else:
+        steam_library_path = input('Enter the location of your Steam library, e.g. G:/Games/Steam\n>> ')
     need_VR_tags = False
+    if input('Do you need tags for your VR titles? Advanced option, takes longer. (y/n) >> ').lower() in yes:
+        need_VR_tags = True
     
-    games_by_appID = make_ascii_compatible(no_misc_games(getMyGamesAndNames(steam_library_path)))
+
+
+    games_by_appID = asciiify(removeMiscGames(getMyGamesAndNames(steam_library_path)))
     print('Acquired real installed games list')
-    
     getImages('steam', steam_install_path, games_by_appID, 'generated_images')
-    generatePrintableImageGrids('generated_images')
+    n = generatePrintableImageGrids('generated_images')
     buildGameList(games_by_appID, doRequests=need_VR_tags)
+    
+    print(f'Done, you can print the {n} page(s) and upload the firmware now')
 
 if __name__ == '__main__':
     main()
