@@ -1,10 +1,14 @@
-Import("env") # type: ignore
+Import("env")
+
+if env.IsIntegrationDump():
+   Return()
+
 
 import os
 import shutil
 
 precompile_script_success: bool = False
-def pre():
+def pre(*_):
     # runs pre compilation but post project configuration
     print('Custom pre compilation script running now')
     if os.path.exists('./include/temp_batch_game_list.h'):
@@ -26,12 +30,5 @@ def post(source, target, env):
         shutil.move('./include/temp_batch_game_list.h', './include/batch_game_list.h')
 
 pre()
-env.AddPostAction("$BUILD_DIR/${PROGNAME}.hex", post) # type: ignore
 
-
-
-
-    
-
-
-
+env.AddPostAction("$BUILD_DIR/${PROGNAME}.hex", post)
