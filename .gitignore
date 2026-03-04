@@ -1,9 +1,9 @@
 __pycache__/
 .vscode/
 
-generated_images*/*.jpg
+generated_images*/*
 cartridge-firmware/include/batch_game_list_local*.h
-sheet_p*.png
+printer_sheets.pdf
 
 old/
 

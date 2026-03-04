@@ -1,12 +1,13 @@
 import os
 import shutil
 from math import floor, ceil
-from time import time, sleep
+from time import time, strftime, sleep
 from random import random
 import re
 import requests
 import numpy as np
 import cv2 # opencv-python
+import img2pdf
 
 # todo: invent clever variable names
 # todo: use globs where appropriate
@@ -65,16 +66,18 @@ def asciiify(all_games: dict) -> dict:
     
     return all_games
 
-def getImages(platform: str, source: str, games_by_appID: dict[str, str] = {}, cachefolder: str = "dummy"):
+def getImages(platform: str, source: str, games_by_appID: dict[str, str], cachefolder: str):
     def flatten_list(xss):
         return [x for xs in xss for x in xs]
     
+    if not cachefolder:
+        return
+    
     platform = platform.lower().strip()
-    #gogpath = 'C:\\ProgramData\\GOG.com\\Galaxy'
     
     # clear and rebuild the image cache
     dest_path = os.path.join(os.getcwd(), cachefolder)
-    if cachefolder != '' and cachefolder in os.listdir():
+    if cachefolder in os.listdir():
         shutil.rmtree(os.path.join(dest_path)) # careful you could delete the whole project if cachefolder is empty
     os.mkdir(cachefolder)
 
@@ -106,6 +109,7 @@ def getImages(platform: str, source: str, games_by_appID: dict[str, str] = {}, c
     
     elif platform == 'gog':
         pass
+        #gogpath = 'C:\\ProgramData\\GOG.com\\Galaxy'
         #gogpath += '\\webcache'
         # res = (342, 482)
         # todo: implement gog support
@@ -156,7 +160,7 @@ def generatePrintableImageGrids(source: str, width: int = floor(300*8.5), height
         # collect a set of images
         if page == max_pages: # todo: break when actual limit reached
             break
-        print(f'Creating sheet {page+1} of {max_pages}')
+        print(f'Organizing page {page+1} of {max_pages}')
 
         path_set = paths_lib[(page*42) : (page*42+42)]
         # get library cards, scale if necessary
@@ -202,8 +206,17 @@ def generatePrintableImageGrids(source: str, width: int = floor(300*8.5), height
             rotation=90
         )
 
-        cv2.imwrite(f"sheet_p{page+1}.png", result)
+        cv2.imwrite(f"{source}/sheet_p{page+1}.png", result)
         page += 1
+
+    # convert generated images cache to pdf
+    print('Generating .PDF')
+    with open("printer_sheets.pdf", 'wb') as F:
+        pngs = sorted([f'{source}/{i}' for i in os.listdir(source) if i.endswith(".png") and i.startswith("sheet_p")], 
+                      key=lambda fname: int(fname.rsplit('.', 1)[0].split('sheet_p')[1]))
+        pdfbytes = img2pdf.convert(pngs)
+        assert pdfbytes is not None
+        F.write(pdfbytes)
 
     return max_pages
 
@@ -238,6 +251,7 @@ def buildGameList(games_by_appID: dict[str, str], doRequests: bool = False):
         F.write('#ifndef BATCH_GAME_LIST_H\n')
         F.write('#define BATCH_GAME_LIST_H\n\n')
         F.write('#include <Arduino.h>\n\n')
+        F.write(f'// Automatically generated on {strftime("%D %T %p")}\n\n')
         
         F.write('static const char * const P_game_list[] PROGMEM = {\n')
         time_of_last_request = 0
@@ -307,7 +321,7 @@ def main():
     n = generatePrintableImageGrids('generated_images')
     buildGameList(games_by_appID, doRequests=need_VR_tags)
     
-    print(f'Done, you can print the {n} page(s) and upload the firmware now')
+    print(f'Done, you can print the {n}-page "printer_sheets.pdf" and also upload the firmware now')
 
 if __name__ == '__main__':
     main()
