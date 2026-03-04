@@ -9,6 +9,7 @@ import numpy as np
 import cv2 # opencv-python
 
 # todo: unify function naming convention to camelCase, invent clever variable names
+# todo: use globs where appropriate
 
 def getMyGamesAndNames(source: str) -> dict[str, str]:
     # return a dictionary mapping appIDs to names, stripping any special characters
@@ -36,11 +37,14 @@ def getMyGamesAndNames(source: str) -> dict[str, str]:
 
 def no_misc_games(all_games: dict) -> dict:
     # filter out soundtracks, demos
-    filter_out = {'SteamLinuxRuntime', 'Soundtrack', ' Demo', 'ProtonExperimental', 'Proton90', 'tModLoader'}
+    filter_out = {'SteamLinuxRuntime', ' Soundtrack', ' Demo', 'ProtonExperimental', 'Proton90', 'tModLoader'}
+    # more aggressive filters for tools
+    filter_out2 = {'3DMark', 'Natural Locomotion', 'Wallpaper Engine'}
+    
     skipped_games = []
     for gameID in list(all_games):
         gameName = all_games[gameID]
-        for filt in filter_out:
+        for filt in (filter_out | filter_out2):
             if filt in gameName:
                 skipped_games.append(gameName)
                 all_games.pop(gameID)
@@ -216,7 +220,7 @@ def buildGameList(games_by_appID: dict[str, str], doRequests: bool = False):
     else:
         print('Writing header file')
 
-    with open('batch_game_list.h', 'wt') as F:
+    with open('cartridge-firmware/include/batch_game_list_local.h', 'wt') as F:
         F.write('#ifndef BATCH_GAME_LIST_H\n')
         F.write('#define BATCH_GAME_LIST_H\n\n')
         F.write('#include <Arduino.h>\n\n')
@@ -241,7 +245,7 @@ def buildGameList(games_by_appID: dict[str, str], doRequests: bool = False):
                     vr = "Y"
                     vr_counter += 1
                     games_by_appID[appID] += '_VR=TRUE' # reuse this dictionary, could be dangerous, we'll see
-            F.write(f'\t"{gameName}:{appID}:{vr}",\n')
+            F.write(f'\t"{gameName[:16]}:{appID}:{vr}",\n')
 
         print()
         F.write('\t"\\0"\n')
@@ -264,14 +268,15 @@ def buildGameList(games_by_appID: dict[str, str], doRequests: bool = False):
 
 def main():
     steam_install_path = 'C:/Program Files (x86)/Steam'
-    steam_library_path = 'G:/Games/Steam'
+    steam_library_path = 'C:/Program Files (x86)/Steam'
+    #steam_library_path = 'G:/Games/Steam'
     need_VR_tags = False
     
     games_by_appID = make_ascii_compatible(no_misc_games(getMyGamesAndNames(steam_library_path)))
     print('Acquired real installed games list')
     
-    getImages('steam', steam_install_path, games_by_appID, './generated_images')
-    generatePrintableImageGrids('./generated_images')
+    getImages('steam', steam_install_path, games_by_appID, 'generated_images')
+    generatePrintableImageGrids('generated_images')
     buildGameList(games_by_appID, doRequests=need_VR_tags)
 
 if __name__ == '__main__':
