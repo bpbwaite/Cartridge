@@ -1,12 +1,12 @@
 #include <Arduino.h>
 #include <Entropy.h>
 #include <FastCRC.h>
+#include <EEPROM.h>
 
 #include <Adafruit_NeoPixel.h>
 #include <Adafruit_PN532.h>
 
 #include "config.h"
-#include "batch_game_list.h"
 #include "util.h"
 
 Adafruit_NeoPixel g_neopixel(NPXL_LEN, PIN_NPXL_DATA, NEO_GRB + NEO_KHZ800);
@@ -120,7 +120,7 @@ void neopixel_handler(const char *mode, uint32_t min_show_ms = 0) {
     }
     case 'W': {
         if (NPXL_LEN == 1) {
-        g_neopixel.fill(COLOR_WAITING);
+            g_neopixel.fill(COLOR_WAITING);
         }
         else if (NPXL_LEN == 3) {
             g_neopixel.clear();
@@ -152,6 +152,23 @@ uint32_t get_random_gameID(void) {
         return 0;
     }
     uint8_t appID_list_size = EEPROM.read(0);
+    // EEPROM.read(1);
+    // EEPROM.read(2);
+    // EEPROM.read(3);
+    // todo: use EEPROM get and set instead
+    uint32_t id_start = ((random() % appID_list_size) + 1) * sizeof(uint32_t); // we add one so we don't get the list size
+    
+    return
+    uint32_t(EEPROM.read(id_start + 0) << 24) + 
+    uint32_t(EEPROM.read(id_start + 1) << 16) + 
+    uint32_t(EEPROM.read(id_start + 2) << 8) + 
+    uint32_t(EEPROM.read(id_start + 3) << 0) ; // casts prevent overflow
+}
+
+void quick_make_random_cartridge(void) {
+    uint8_t uid[] = {0, 0, 0, 0, 0, 0, 0};
+    pn532_get_chip(&g_nfc, uid);
+    updatendef_ntag215(&g_nfc, uid, "VIASTEAM" CUSTOM_ASCII_DELIMITER "RANDOM" CUSTOM_ASCII_DELIMITER "N" CUSTOM_ASCII_DELIMITER "1E");
     
     Serial.println("Writing EEPROM");
     Serial.flush();
@@ -181,25 +198,6 @@ uint32_t get_random_gameID(void) {
     Serial.println("Finshed writing EEPROM");
     //Serial.println("Finshed writing EEPROM, contents:");
     //print_eeprom();
-    // EEPROM.read(1);
-    // EEPROM.read(2);
-    // EEPROM.read(3);
-    // todo: use EEPROM get and set instead
-    uint32_t id_start = ((random() % appID_list_size) + 1) * sizeof(uint32_t); // we add one so we don't get the list size
-    
-    return
-    uint32_t(EEPROM.read(id_start + 0) << 24) + 
-    uint32_t(EEPROM.read(id_start + 1) << 16) + 
-    uint32_t(EEPROM.read(id_start + 2) << 8) + 
-    uint32_t(EEPROM.read(id_start + 3) << 0) ; // casts prevent overflow
-}
-
-void quick_make_random_cartridge(void) {
-    Serial.println("Place randomizer cartridge on reader");
-    await_userprompt();
-    uint8_t uid[] = {0, 0, 0, 0, 0, 0, 0};
-    pn532_get_chip(&g_nfc, uid);
-    updatendef_ntag215(&g_nfc, uid, "VIASTEAM" CUSTOM_ASCII_DELIMITER "RANDOM" CUSTOM_ASCII_DELIMITER "N" CUSTOM_ASCII_DELIMITER "1E");
 }
 
 void do_batchwrite(void) {
@@ -211,7 +209,7 @@ void do_batchwrite(void) {
     Serial.println("Starting Batch Write");
 
     neopixel_handler("busy");
-
+    
     // steam logic
     uint32_t gameIndex = 0;
     while (1) {
@@ -226,9 +224,6 @@ void do_batchwrite(void) {
         }
 
         // get information about game
-        // 241 bytes to hold one ndef region record + null char terminator
-        char u_gameString_ndefEntry[241] = "";
-        strcpy_P(u_gameString_ndefEntry, P_game_list[gameIndex]);
         const char *mode = "VIASTEAM";
         char identifier[APPID_BUFS_MAX] = "";
         char *identifier_temp = strstr(serialStreamBuf, ":") + 1;
@@ -240,15 +235,15 @@ void do_batchwrite(void) {
             strcpy(vr_required, "Y");
         }
         strcpy(identifier, identifier_temp);
-
+        
         // compute CRC
         const char hex_chars[] = "0123456789ABCDEF";
-
+        
         uint8_t crc_raw = g_CRC8.smbus((uint8_t *) identifier, strlen(identifier));
         char crc_hex[3] = "00";
         crc_hex[0]      = hex_chars[(crc_raw >> 4) & 0xF];
         crc_hex[1]      = hex_chars[crc_raw & 0xF];
-
+        
         Serial.print("Now writing: \"");
         Serial.print(serialStreamBuf);
         Serial.print("\" (ID=");
@@ -259,9 +254,9 @@ void do_batchwrite(void) {
         Serial.print(crc_hex);
         Serial.println(".");
         Serial.println("(Hit enter to skip)");
-
+        
         neopixel_handler("waiting", PN532_READ_WRITE_DEBOUNCE); // gives you a little time to pull the previous game away, "debouncing"
-
+        
         while (1) {
             delay(1000 / CHIP_PEEK_POLLING_FREQ);
             if (pn532_peek(&g_nfc) || Serial.available()) {
@@ -269,11 +264,10 @@ void do_batchwrite(void) {
             }
         }
         if (!Serial.available()) {
-
             // write to chip
             neopixel_handler("busy");
             char u_gameString_ndefEntry[241] = "";  // 241 bytes to hold one ndef region record + null char terminator
-
+            
             strcpy(u_gameString_ndefEntry, mode);
             strcat(u_gameString_ndefEntry, CUSTOM_ASCII_DELIMITER);
             strcat(u_gameString_ndefEntry, identifier);
@@ -284,7 +278,7 @@ void do_batchwrite(void) {
 
             Serial.print("Preparing to write entry: ");
             Serial.println(u_gameString_ndefEntry);
-
+            
             uint8_t uid[] = {0, 0, 0, 0, 0, 0, 0};
             boolean success;
             if ((success = isndef_ntag2xx(&g_nfc, uid))) {
@@ -434,7 +428,6 @@ void setup(void) {
             delay(10);
         }
     }
-
     Serial.println("Serial Connected"); // if the statement isn't true, you aren't going to see it anyways
     Serial.print("MCU firmware built on ");
     Serial.println(COMPILE_TIME); // todo: unix epoch to date/time/timezone thing
