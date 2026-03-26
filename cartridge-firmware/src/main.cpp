@@ -66,14 +66,16 @@ void neopixel_handler(const char *mode, uint32_t min_show_ms = 0) {
                 // a strip of pixels animates
                 g_neopixel.setPixelColor(busyBlinker, 0UL);
                 if (directionForward) {
-                    g_neopixel.setPixelColor(busyBlinker + 1, COLOR_BUSY);
-                    if (busyBlinker + 1 == width - 1) {
+                    busyBlinker += 1;
+                    g_neopixel.setPixelColor(busyBlinker, COLOR_BUSY);
+                    if (busyBlinker == width - 1) {
                         directionForward = false;
                     }
                 }
                 else {
-                    g_neopixel.setPixelColor(busyBlinker - 1, COLOR_BUSY);
-                    if (busyBlinker - 1 == 0) {
+                    busyBlinker -= 1;
+                    g_neopixel.setPixelColor(busyBlinker, COLOR_BUSY);
+                    if (busyBlinker == 0) {
                         directionForward = true;
                     }
                 }
@@ -83,6 +85,7 @@ void neopixel_handler(const char *mode, uint32_t min_show_ms = 0) {
         break;
     }
     case 'B': {
+        g_neopixel.clear();
         g_neopixelTimer.begin([]() -> void { neopixel_handler("_interrupt"); }, busyCheckPeriod);
         break;
     }
@@ -116,7 +119,13 @@ void neopixel_handler(const char *mode, uint32_t min_show_ms = 0) {
         break;
     }
     case 'W': {
+        if (NPXL_LEN == 1) {
         g_neopixel.fill(COLOR_WAITING);
+        }
+        else if (NPXL_LEN == 3) {
+            g_neopixel.clear();
+            g_neopixel.setPixelColor(1, COLOR_WAITING);
+        }
         break;
     }
     }
