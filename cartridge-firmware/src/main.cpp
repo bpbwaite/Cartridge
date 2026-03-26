@@ -146,6 +146,54 @@ void temp_checker(void) {
     }
 }
 
+uint32_t get_random_gameID(void) {
+
+    if (!USING_RANDOMIZER) {
+        return 0;
+    }
+    uint8_t appID_list_size = EEPROM.read(0);
+    
+    Serial.println("Writing EEPROM");
+    Serial.flush();
+    Serial.clear();
+    
+    Serial.println("<RANDOMGAMES>");
+    while(!Serial.available())
+        ;
+    // script sends raw bytes, not utf-8.
+    // the first byte written to the eeprom will tell us the number of entries (4 bytes each)
+    uint8_t n = Serial.read();
+    uint32_t maxbytes = n * sizeof(uint32_t);
+    
+    EEPROM.write(0, n);
+    
+    uint32_t idx = 0;
+    while (idx < maxbytes) {
+        int ebyte = Serial.read();
+        if (ebyte == -1) {
+            delay(10);
+            continue; // the sender must transmit n bytes total to break this loop, todo: a restting max-retries limit
+        }
+        
+        EEPROM.write(idx + sizeof(uint32_t), ebyte);
+        idx++;
+    }
+    Serial.println("Finshed writing EEPROM");
+    //Serial.println("Finshed writing EEPROM, contents:");
+    //print_eeprom();
+    // EEPROM.read(1);
+    // EEPROM.read(2);
+    // EEPROM.read(3);
+    // todo: use EEPROM get and set instead
+    uint32_t id_start = ((random() % appID_list_size) + 1) * sizeof(uint32_t); // we add one so we don't get the list size
+    
+    return
+    uint32_t(EEPROM.read(id_start + 0) << 24) + 
+    uint32_t(EEPROM.read(id_start + 1) << 16) + 
+    uint32_t(EEPROM.read(id_start + 2) << 8) + 
+    uint32_t(EEPROM.read(id_start + 3) << 0) ; // casts prevent overflow
+}
+
 void quick_make_random_cartridge(void) {
     Serial.println("Place randomizer cartridge on reader");
     await_userprompt();
