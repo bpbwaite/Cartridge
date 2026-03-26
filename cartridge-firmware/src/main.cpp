@@ -230,14 +230,16 @@ void do_batchwrite(void) {
         char u_gameString_ndefEntry[241] = "";
         strcpy_P(u_gameString_ndefEntry, P_game_list[gameIndex]);
         const char *mode = "VIASTEAM";
-        char *identifier = strstr(u_gameString_ndefEntry, ":") + 1;
+        char identifier[APPID_BUFS_MAX] = "";
+        char *identifier_temp = strstr(serialStreamBuf, ":") + 1;
         // insert nullchar at id end
-        char *id_end       = strstr(identifier, ":");
+        char *id_end       = strstr(identifier_temp, ":");
         *id_end            = '\0';
         char vr_required[] = "N";
         if (*(id_end + 1) == 'Y') {
             strcpy(vr_required, "Y");
         }
+        strcpy(identifier, identifier_temp);
 
         // compute CRC
         const char hex_chars[] = "0123456789ABCDEF";
@@ -270,7 +272,7 @@ void do_batchwrite(void) {
 
             // write to chip
             neopixel_handler("busy");
-            strcpy(u_gameString_ndefEntry, "");
+            char u_gameString_ndefEntry[241] = "";  // 241 bytes to hold one ndef region record + null char terminator
 
             strcpy(u_gameString_ndefEntry, mode);
             strcat(u_gameString_ndefEntry, CUSTOM_ASCII_DELIMITER);
@@ -292,7 +294,7 @@ void do_batchwrite(void) {
                 neopixel_handler("success");
                 Serial.println("Prepare next cartridge");
                 while (pn532_peek(&g_nfc)) {
-                    delay(50);
+                    delay(50); // todo: use CHIP_PEEK_POLLING_FREQ here
                 }
                 gameIndex += 1;
             }
@@ -349,7 +351,7 @@ void do_launcher(boolean dryRun = false) {
             char *id_start = strstr((char *) data, CUSTOM_ASCII_DELIMITER) + 1;
             char *id_end   = strstr((char *) id_start, CUSTOM_ASCII_DELIMITER) - 1;
             uint8_t id_len = id_end - id_start + 1;
-            boolean vr     = (*(id_end + 2) == 'Y');
+            // boolean vr     = (*(id_end + 2) == 'Y');
             // todo: all the vr launching logic
             // todo: read and confirm checksum bytes
 
