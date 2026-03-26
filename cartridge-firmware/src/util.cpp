@@ -1,19 +1,21 @@
 #include "util.h"
 
-#include "batch_game_list.h" // for randomization helper functions
-
 // helpful i/o functions
 
-void await_userprompt(void) {
-    Serial.println("----");
-    Serial.println("Send a character to continue...");
-    Serial.flush();
-    while (!Serial.available())
-        ;
-    while (Serial.available()) {
-        Serial.read();
+void print_eeprom(void) {
+    const uint32_t eeprom_size = E2END + 1;
+    Serial.print("[");
+    for (uint32_t i = 0; i < eeprom_size; i++) {
+        if ((i > 0) && (i % sizeof(uint32_t) == 0)) {
+            Serial.print("][");
+        }
+        uint8_t eri = EEPROM.read(i);
+        if (eri < 0x10) {
+            Serial.print('0');
+        }
+        Serial.print(eri, HEX);
     }
-    Serial.flush();
+    Serial.println("]");
 }
 
 void pc_run_command(const char *s) {
@@ -94,18 +96,6 @@ void pc_kill_game(const char *appID, boolean just_alt_f4) {
     }
 }
 
-uint32_t get_random_gameID(void) {
-    #ifndef FLASH_LISTS_NOT_INITIALIZED
-    // tried doing this in EEPROM so we could cycle in the "most recently used" ~100 games or so.
-    // got crashes with both littlefs, eeprom, and even CrashReport library
-    // store appIDs as integers to save space, caller will need to use itoa into a buf
-    static_assert(sizeof(P_appID_list) > 0 || !USING_RANDOMIZER, "No AppIDs for randomizer to pick from");
-    return P_appID_list[random() % (sizeof(P_appID_list) / sizeof(uint32_t))];
-    #else
-    return 0;
-    #endif
-}
-
 // PN532 functions
 
 boolean pn532_init(Adafruit_PN532 *nfc, uint8_t limit_retries) {
@@ -116,8 +106,8 @@ boolean pn532_init(Adafruit_PN532 *nfc, uint8_t limit_retries) {
         return false;
     }
     Serial.print("Found chip PN5");
-    Serial.println((versiondata >> 24) & 0xFF, HEX);
-    Serial.print("Firmware ver. ");
+    Serial.print((versiondata >> 24) & 0xFF, HEX);
+    Serial.print(" ver. ");
     Serial.print((versiondata >> 16) & 0xFF, DEC);
     Serial.print('.');
     Serial.println((versiondata >> 8) & 0xFF, DEC);

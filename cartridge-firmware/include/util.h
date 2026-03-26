@@ -5,14 +5,13 @@
 
 #include <Arduino.h>
 #include <Adafruit_PN532.h>
+#include <EEPROM.h>
 
-void await_userprompt(void);
+void print_eeprom(void);
 
 void pc_run_command(const char *s);
 
 void pc_kill_game(const char *appID, boolean just_alt_f4 = false);
-
-uint32_t get_random_gameID(void);
 
 boolean pn532_init(Adafruit_PN532 *nfc, uint8_t limit_retries = 0xFF);
 
