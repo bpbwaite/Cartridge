@@ -3,15 +3,17 @@ import shutil
 from math import floor, ceil
 from time import time, strftime, sleep
 from random import random
+import serial
+import serial.tools.list_ports
+import threading
 import re
 import requests
 import numpy as np
 import cv2 # opencv-python
 import img2pdf
 
-# todo: invent clever variable names
+# todo: invent even more clever variable names
 # todo: use globs where appropriate
-# todo: send the built game list, including randoms, over usb to the teensy so we can have one unified firmware image.
 
 def getMyGamesAndNames(source: str) -> dict[str, str]:
     # return a dictionary mapping appIDs to names, stripping any special characters
@@ -237,23 +239,19 @@ def isSteamGameVR(appID: str) -> bool:
             print(f"App {data['name']} ({appID}) has no category/feature tags (probably a soundtrack), ignoring VR options.")
     return False
 
-def buildGameList(games_by_appID: dict[str, str], doRequests: bool = False):
+def buildGameList(ofile: str, games_by_appID: dict[str, str], doRequests: bool = False):
     
-    appIDListLimit = 128 # list limit for the random games section, not a hard library size limit
-    rate_limit = 0.01
+    appIDListLimit = 255 # list limit for the random games section, not a hard library size limit
+    rate_limit = 0.001
     if doRequests:
         rate_limit = 0.668
-        print('Writing header file, this may take a moment...')
+        print('Writing game list, this may take a moment...')
     else:
-        print('Writing header file')
+        print('Writing game list')
 
-    with open('cartridge-firmware/include/batch_game_list_local.h', 'wt') as F:
-        F.write('#ifndef BATCH_GAME_LIST_H\n')
-        F.write('#define BATCH_GAME_LIST_H\n\n')
-        F.write('#include <Arduino.h>\n\n')
-        F.write(f'// Automatically generated on {strftime("%D %T %p")}\n\n')
+    with open(ofile, 'wt') as F:
+        F.write(f'<> Game list automatically generated on {strftime("%D %T %p")}\n')
         
-        F.write('static const char * const P_game_list[] PROGMEM = {\n')
         time_of_last_request = 0
         counter = 0
         vr_counter = 0
@@ -273,14 +271,12 @@ def buildGameList(games_by_appID: dict[str, str], doRequests: bool = False):
                     vr = "Y"
                     vr_counter += 1
                     games_by_appID[appID] += '_VR=TRUE' # reuse this dictionary, could be dangerous, we'll see
-            F.write(f'\t"{gameName[:16]}:{appID}:{vr}",\n')
+            F.write(f'{gameName[:16]}:{appID}:{vr}\n')
 
         print()
-        F.write('\t"\\0"\n')
-        F.write('};\n')
 
         # write non-vr games to the random eeprom
-        F.write('static const uint32_t PROGMEM P_appID_list[] = {\n')
+        F.write('<> Random games\n')
         for i, appID in enumerate(sorted(list(games_by_appID), key=lambda _: random())):
             if i >= appIDListLimit:
                 break
@@ -288,17 +284,129 @@ def buildGameList(games_by_appID: dict[str, str], doRequests: bool = False):
                 print(f'Skipped writing {games_by_appID[appID]} to random games list')
                 appIDListLimit += 1 # try for a different game
                 continue
-            F.write(f'{appID}, ')
-        F.write('\n};\n\n')
-        F.write('#endif\n')
+            F.write(f'{appID}\n')
 
     print(f'Exported {counter} games, {vr_counter} tagged as using VR')
 
-def main():
+def writeGamesSerial(infile: str):
+    
+    ports = serial.tools.list_ports.comports()
+    if not ports:
+        print('No ports found, aborting upload')
+        return
+    print('Port enumeration:')
+    port_dict = {}
+    for ii, port in enumerate(ports):
+        i = ii + 1
+        port_dict[i] = port
+        print(f'\t[{i}] - {port.name}:{port.device} - {port.description}', end='')
+        if port.vid == 0x16C0 and port.pid >= 0x0477 and port.pid <= 0x0488:
+            print(' <-- Teensy!', end='')
+    print()
 
+    teensy_port = ""
+    if len(port_dict) == 1 and port_dict[1].vid == 0x16C0:
+        print(f'Automatically found Teensy on {port_dict[1].name}')
+        teensy_port = port_dict[1].name
+    else:
+        print('Please choose a COM port for uploading')
+        while True:
+            choice = input('(Enter a number) >> ')
+            if not choice.isnumeric():
+                continue
+            choice = int(choice)
+            if choice in port_dict:
+                break
+        teensy_port = port_dict[int(choice)].name
+
+    try:
+        with serial.Serial(port=teensy_port, timeout=1) as S:
+            sleep(1)
+
+            # fork, main thread continues to handle user input
+            def serial_monitor_routine():
+                def echo() -> str:
+                    while S.in_waiting == 0:
+                        sleep(0.01)
+                    from_teensy = S.readline().decode(errors='replace').rstrip()
+                    print(f'[{time():.3f}] -> {from_teensy}')
+                    return from_teensy
+
+                try:
+                    with open(infile, "rt") as F:
+                        header = F.readline().rstrip()
+                        print(f'File header: {header}')
+                        while True:
+                            if "<NEXTGAME>" in echo():
+                                game = F.readline()
+                                if "<>" in game:
+                                    S.write('*\n'.encode()) # done
+                                    # move on to random section
+                                    break
+                                else:
+                                    S.write(game.encode())
+
+                        while not ("<RANDOMGAMES>" in echo()):
+                            pass
+                        
+                        appIDs = []
+                        while True:
+                            id = F.readline().strip()
+                            if not id or len(id) <= 1:
+                                break
+                            appIDs.append(int(id))
+                        S.write(bytes([len(appIDs)]))
+                    
+                    print(f'Writing {len(appIDs)} appIDs')
+                    for id in appIDs:
+                        #print(f'ID:<{id}>')
+                        S.write(bytes([
+                            (id & 0xFF000000) >> 24, 
+                            (id & 0x00FF0000) >> 16, 
+                            (id & 0x0000FF00) >> 8, 
+                            (id & 0x000000FF) >> 0
+                            ]))
+                    S.write('*\n'.encode()) # done
+
+                    # Echo until thread is forced to exit
+                    while not ("<EXIT>" in echo()):
+                        pass
+                
+                except serial.SerialException as e:
+                    pass
+                    #print(f'Subroutine thread disconnected ({e})')
+                print(f'Serial thread disconnected, press enter to exit') # continues in main function
+                return
+            
+            coroutine = threading.Thread(target=serial_monitor_routine, daemon=True) # args=(S,)
+            coroutine.start()
+            
+            while True:
+                if not coroutine.is_alive():
+                    coroutine.join()
+                    break
+                _ = input()
+                S.write('X\n'.encode())
+        
+    except serial.SerialException as e:
+        #print(f'Main thread disconnected ({e})')
+        pass
+    except KeyboardInterrupt:
+        pass
+
+    print('Done. Power cycle the reader before re-running this setup')
+                
+def main():
     # get installation path variables from user
     default_steampaths = 'C:/Program Files (x86)/Steam'
+    games_eeprom_file = 'batch_game_list_local.txt'
     yes = {'y', 'yes'}
+    # if there is an eeprom file, ask if we want to skip ahead and install it
+    if os.path.isfile(games_eeprom_file):
+        if input('There is an existing list. Skip build and upload games now? (y/n) >> ').lower() in yes:
+            writeGamesSerial(games_eeprom_file)
+            return
+    
     steam_install_path = input('Is Steam installed at "' + default_steampaths + '"? (y/n) >> ')
     if steam_install_path.lower() in yes:
         steam_install_path = default_steampaths
@@ -312,16 +420,21 @@ def main():
     need_VR_tags = False
     if input('Do you need tags for your VR titles? Advanced option, takes longer. (y/n) >> ').lower() in yes:
         need_VR_tags = True
-    
-
+    wants_eeprom = False
+    if input('Would you like to upload the games list upon completion? (y/n) >> ').lower() in yes:
+        wants_eeprom = True
 
     games_by_appID = asciiify(removeMiscGames(getMyGamesAndNames(steam_library_path)))
     print('Acquired real installed games list')
     getImages('steam', steam_install_path, games_by_appID, 'generated_images')
     n = generatePrintableImageGrids('generated_images')
-    buildGameList(games_by_appID, doRequests=need_VR_tags)
+    buildGameList(games_eeprom_file, games_by_appID, doRequests=need_VR_tags)
     
-    print(f'Done, you can print the {n}-page "printer_sheets.pdf" and also upload the firmware now')
+    print(f'You can now print the {n}-page "printer_sheets.pdf"')
+    os.startfile('printer_sheets.pdf')
+    
+    if wants_eeprom:
+        writeGamesSerial(games_eeprom_file)    
 
 if __name__ == '__main__':
     main()
