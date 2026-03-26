@@ -1,9 +1,9 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#define NPXL_LEN                  (1)    // 1 or 3
-#define NPXL_NOTIF_LENGTH         (1000) // ms
-#define NPXL_BLINKS_INTERVAL      (245) // ms, 200+
+#define NPXL_LEN                  (3)    // 1 or 3
+#define NPXL_NOTIF_LENGTH         (900) // ms
+#define NPXL_BLINKS_INTERVAL      (225) // ms, 200+
 #define WIN_RUN_WAIT              (500)
 #define CHIP_PEEK_POLLING_FREQ    (5)    // Hz, max 10
 #define PN532_READ_WRITE_DEBOUNCE (1000) // ms
