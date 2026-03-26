@@ -467,19 +467,31 @@ void setup(void) {
     // setup all good
     g_neopixelTimer.end();
     neopixel_handler("success", NPXL_NOTIF_LENGTH);
-    // quick_make_random_cartridge();
-}
 
-void loop(void) {
-
-    static boolean batch_write_complete = false;
-    if ((dipSwitches & 0b010) && !batch_write_complete) {
+    // ### possibly: enter batch setup mode ###
+    if (dipSwitches & 0b010) {
         do_batchwrite();
         neopixel_handler("busy", NPXL_NOTIF_LENGTH);
         Serial.println("Batch game writing is all done!");
         neopixel_handler("success", NPXL_NOTIF_LENGTH);
-        batch_write_complete = true;
+        // ask if they want a randomizer cartridge
+        Serial.println("If you would like a randomizer-cartridge, place it on the reader now");
+        Serial.println("(This will also reinitialize the EEPROM for random games)");
+        Serial.println("Otherwise, set the dip switches for normal operation and power cycle the reader");
+        neopixel_handler("busy");
+        quick_make_random_cartridge();
+        Serial.println("Nothing more to do");
+        Serial.println("Please set the dip switches for normal operation and power cycle the reader");
+        neopixel_handler("success");
+        
+        Serial.println("<EXIT>");
+        Serial.flush();
+        Serial.end(); // doesn't actually do anything
+        while(1)
+            ;
     }
+}
 
-    do_launcher(true);
+void loop(void) {
+    do_launcher();
 }
