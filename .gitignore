@@ -2,7 +2,7 @@ __pycache__/
 .vscode/
 
 generated_images*/*
-cartridge-firmware/include/batch_game_list_local*.h
+batch_game_list_local*.*
 printer_sheets.pdf
 
 old/
