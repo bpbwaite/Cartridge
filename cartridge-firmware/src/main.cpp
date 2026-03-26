@@ -204,16 +204,24 @@ void quick_make_random_cartridge(void) {
 
 void do_batchwrite(void) {
 
+    const uint8_t SCBL = 48; // serial command buffer length, name is WIP
+    char serialStreamBuf[SCBL]; // more than enough space for commands; name, delimiters, ID, mode (43 max)
+
     neopixel_handler("waiting");
     Serial.println("Starting Batch Write");
-    await_userprompt();
+
     neopixel_handler("busy");
 
     // steam logic
     uint32_t gameIndex = 0;
     while (1) {
-        if (strlen_P(P_game_list[gameIndex]) < 1) {
-            // all games scanned
+        Serial.clear();
+        Serial.println("<NEXTGAME>"); // we are ready to receive new game data
+        while(!Serial.available())
+            ;
+        Serial.readBytesUntil('\n', serialStreamBuf, SCBL);
+        if (!strcmp(serialStreamBuf, "*")) {
+            // all games scanned in
             break;
         }
 
@@ -240,7 +248,7 @@ void do_batchwrite(void) {
         crc_hex[1]      = hex_chars[crc_raw & 0xF];
 
         Serial.print("Now writing: \"");
-        Serial.print(u_gameString_ndefEntry);
+        Serial.print(serialStreamBuf);
         Serial.print("\" (ID=");
         Serial.print(identifier);
         Serial.print("), vr=");
@@ -248,7 +256,7 @@ void do_batchwrite(void) {
         Serial.print(", CRC=0x");
         Serial.print(crc_hex);
         Serial.println(".");
-        Serial.println("(X to skip)");
+        Serial.println("(Hit enter to skip)");
 
         neopixel_handler("waiting", PN532_READ_WRITE_DEBOUNCE); // gives you a little time to pull the previous game away, "debouncing"
 
