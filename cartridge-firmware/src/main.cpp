@@ -426,7 +426,7 @@ void setup(void) {
     }
 
     Serial.println("Serial Connected"); // if the statement isn't true, you aren't going to see it anyways
-    Serial.print("Firmware built on ");
+    Serial.print("MCU firmware built on ");
     Serial.println(COMPILE_TIME); // todo: unix epoch to date/time/timezone thing
     if (!timersWorking) {
         Serial.println("A timer failed initialization, cannot continue.");
@@ -444,6 +444,9 @@ void setup(void) {
         while (1)
             ; // HALT
     }
+
+    Serial.print("Checking EEPROM objects stored: ");
+    Serial.println(EEPROM.read(0) << 2);
 
     elapsedMillis sinceEntropyExpected;
     while (!Entropy.available()) {
