@@ -1,7 +1,7 @@
 __pycache__/
 .vscode/
 
-generated_images*/*
+copied_images*/*
 batch_game_list_local*.*
 printer_sheets.pdf
 

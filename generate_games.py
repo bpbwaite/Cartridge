@@ -426,8 +426,8 @@ def main():
 
     games_by_appID = asciiify(removeMiscGames(getMyGamesAndNames(steam_library_path)))
     print('Acquired real installed games list')
-    getImages('steam', steam_install_path, games_by_appID, 'generated_images')
-    n = generatePrintableImageGrids('generated_images')
+    getImages('steam', steam_install_path, games_by_appID, 'copied_images')
+    n = generatePrintableImageGrids('copied_images')
     buildGameList(games_eeprom_file, games_by_appID, doRequests=need_VR_tags)
     
     print(f'You can now print the {n}-page "printer_sheets.pdf"')
