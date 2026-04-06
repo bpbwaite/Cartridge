@@ -15,12 +15,13 @@ IntervalTimer g_neopixelTimer;
 IntervalTimer g_tempRoutineTimer;
 FastCRC8 g_CRC8;
 
-uint8_t dipSwitches = 0b000; // debug|batchWrite|closePrev
+uint8_t dipSwitches = 0b000;
 
 // ### my main functions, which can access these global variables
 
 void updateDipSwitches(void) {
     // DIP reads inverted logic when input is pullup
+    // todo: separate out into idle_tasks that gets called often during spin time in main loop
     dipSwitches = (!digitalRead(PIN_DIP1) << 2) | (!digitalRead(PIN_DIP2) << 1) | (!digitalRead(PIN_DIP3) << 0);
 }
 
@@ -43,7 +44,7 @@ void neopixel_handler(const char *mode, uint32_t min_show_ms = 0) {
     const uint32_t COLOR_WAITING     = 0xFFFFE0;
     const uint32_t COLOR_OVERHEATING = 0xFF0000;
 
-    const int busyCheckPeriod           = 100000; // microseconds between each interrupt
+    const int busyCheckPeriod = 100000; // microseconds between each interrupt
 
     static elapsedMillis sinceBusyBlink;
     static uint16_t busyBlinker     = NPXL_LEN / 2; // start at 0 unless you have 3 LEDS, then start at 1
@@ -135,6 +136,7 @@ void neopixel_handler(const char *mode, uint32_t min_show_ms = 0) {
 }
 
 void temp_checker(void) {
+    // todo: separate out into idle_tasks that gets called often during spin time in main loop
     float coreTempC = tempmonGetTemp();
     if (coreTempC > float(85.0)) {
         Serial.print("Core temperature: ");
@@ -157,33 +159,30 @@ uint32_t get_random_gameID(void) {
     // EEPROM.read(3);
     // todo: use EEPROM get and set instead
     uint32_t id_start = ((random() % appID_list_size) + 1) * sizeof(uint32_t); // we add one so we don't get the list size
-    
-    return
-    uint32_t(EEPROM.read(id_start + 0) << 24) + 
-    uint32_t(EEPROM.read(id_start + 1) << 16) + 
-    uint32_t(EEPROM.read(id_start + 2) << 8) + 
-    uint32_t(EEPROM.read(id_start + 3) << 0) ; // casts prevent overflow
+
+    return uint32_t(EEPROM.read(id_start + 0) << 24) + uint32_t(EEPROM.read(id_start + 1) << 16) + uint32_t(EEPROM.read(id_start + 2) << 8) +
+           uint32_t(EEPROM.read(id_start + 3) << 0); // casts prevent overflow
 }
 
 void quick_make_random_cartridge(void) {
     uint8_t uid[] = {0, 0, 0, 0, 0, 0, 0};
     pn532_get_chip(&g_nfc, uid);
     updatendef_ntag215(&g_nfc, uid, "VIASTEAM" CUSTOM_ASCII_DELIMITER "RANDOM" CUSTOM_ASCII_DELIMITER "N" CUSTOM_ASCII_DELIMITER "1E");
-    
+
     Serial.println("Writing EEPROM");
     Serial.flush();
     Serial.clear();
-    
+
     Serial.println("<RANDOMGAMES>");
-    while(!Serial.available())
+    while (!Serial.available())
         ;
     // script sends raw bytes, not utf-8.
     // the first byte written to the eeprom will tell us the number of entries (4 bytes each)
-    uint8_t n = Serial.read();
+    uint8_t n         = Serial.read();
     uint32_t maxbytes = n * sizeof(uint32_t);
-    
+
     EEPROM.write(0, n);
-    
+
     uint32_t idx = 0;
     while (idx < maxbytes) {
         int ebyte = Serial.read();
@@ -191,72 +190,80 @@ void quick_make_random_cartridge(void) {
             delay(10);
             continue; // the sender must transmit n bytes total to break this loop, todo: a restting max-retries limit
         }
-        
+
         EEPROM.write(idx + sizeof(uint32_t), ebyte);
         idx++;
     }
     Serial.println("Finshed writing EEPROM");
-    //Serial.println("Finshed writing EEPROM, contents:");
-    //print_eeprom();
+    // Serial.println("Finshed writing EEPROM, contents:");
+    // print_eeprom();
 }
 
 void do_batchwrite(void) {
 
-    const uint8_t SCBL = 48; // serial command buffer length, name is WIP
-    char serialStreamBuf[SCBL]; // more than enough space for commands; name, delimiters, ID, mode (43 max)
+    char serialStreamBuf[CMD_BUFS_MAX]; // more than enough space for commands; name, delimiters, ID, mode (43 max)
 
     neopixel_handler("waiting");
     Serial.println("Starting Batch Write");
 
     neopixel_handler("busy");
-    
+
     // steam logic
-    uint32_t gameIndex = 0;
     while (1) {
         Serial.clear();
         Serial.println("<NEXTGAME>"); // we are ready to receive new game data
-        while(!Serial.available())
+        while (!Serial.available())
             ;
-        Serial.readBytesUntil('\n', serialStreamBuf, SCBL);
+        Serial.readBytesUntil('\n', serialStreamBuf, CMD_BUFS_MAX);
         if (!strcmp(serialStreamBuf, "*")) {
             // all games scanned in
             break;
         }
 
-        // get information about game
-        const char *mode = "VIASTEAM";
-        char identifier[APPID_BUFS_MAX] = "";
-        char *identifier_temp = strstr(serialStreamBuf, ":") + 1;
-        // insert nullchar at id end
-        char *id_end       = strstr(identifier_temp, ":");
-        *id_end            = '\0';
-        char vr_required[] = "N";
-        if (*(id_end + 1) == 'Y') {
-            strcpy(vr_required, "Y");
+        char mode[12]                            = "VIA_-_-_-_-";
+        char identifier_or_command[CMD_BUFS_MAX] = "";
+        char vr_required[]                       = "N";
+
+        if (!strncasecmp(serialStreamBuf, "Start-Process", strlen("Start-Process"))) {
+            // custom process command
+            strcpy(mode, "VIAPATH");
+            strcpy(identifier_or_command, serialStreamBuf);
         }
-        strcpy(identifier, identifier_temp);
-        
+        else {
+            // regular steam game logic
+            strcpy(mode, "VIASTEAM");
+            // get information about game
+            char *identifier_temp = strstr(serialStreamBuf, ":") + 1;
+            // insert nullchar at id end
+            char *id_end = strstr(identifier_temp, ":");
+            *id_end      = '\0';
+            if (*(id_end + 1) == 'Y') {
+                strcpy(vr_required, "Y");
+            }
+            strcpy(identifier_or_command, identifier_temp);
+        }
+
         // compute CRC
         const char hex_chars[] = "0123456789ABCDEF";
-        
-        uint8_t crc_raw = g_CRC8.smbus((uint8_t *) identifier, strlen(identifier));
+
+        uint8_t crc_raw = g_CRC8.smbus((uint8_t *) identifier_or_command, strlen(identifier_or_command));
         char crc_hex[3] = "00";
         crc_hex[0]      = hex_chars[(crc_raw >> 4) & 0xF];
         crc_hex[1]      = hex_chars[crc_raw & 0xF];
-        
+
         Serial.print("Now writing: \"");
         Serial.print(serialStreamBuf);
         Serial.print("\" (ID=");
-        Serial.print(identifier);
+        Serial.print(identifier_or_command);
         Serial.print("), vr=");
         Serial.print(vr_required);
         Serial.print(", CRC=0x");
         Serial.print(crc_hex);
         Serial.println(".");
         Serial.println("(Hit enter to skip)");
-        
+
         neopixel_handler("waiting", PN532_READ_WRITE_DEBOUNCE); // gives you a little time to pull the previous game away, "debouncing"
-        
+
         while (1) {
             delay(1000 / CHIP_PEEK_POLLING_FREQ);
             if (pn532_peek(&g_nfc) || Serial.available()) {
@@ -266,11 +273,11 @@ void do_batchwrite(void) {
         if (!Serial.available()) {
             // write to chip
             neopixel_handler("busy");
-            char u_gameString_ndefEntry[241] = "";  // 241 bytes to hold one ndef region record + null char terminator
-            
+            char u_gameString_ndefEntry[NDEF_SECTOR_BYTES + 1] = ""; // 241 bytes to hold one ndef region record + null char terminator
+
             strcpy(u_gameString_ndefEntry, mode);
             strcat(u_gameString_ndefEntry, CUSTOM_ASCII_DELIMITER);
-            strcat(u_gameString_ndefEntry, identifier);
+            strcat(u_gameString_ndefEntry, identifier_or_command);
             strcat(u_gameString_ndefEntry, CUSTOM_ASCII_DELIMITER);
             strcat(u_gameString_ndefEntry, vr_required);
             strcat(u_gameString_ndefEntry, CUSTOM_ASCII_DELIMITER);
@@ -278,7 +285,7 @@ void do_batchwrite(void) {
 
             Serial.print("Preparing to write entry: ");
             Serial.println(u_gameString_ndefEntry);
-            
+
             uint8_t uid[] = {0, 0, 0, 0, 0, 0, 0};
             boolean success;
             if ((success = isndef_ntag2xx(&g_nfc, uid))) {
@@ -290,7 +297,6 @@ void do_batchwrite(void) {
                 while (pn532_peek(&g_nfc)) {
                     delay(50); // todo: use CHIP_PEEK_POLLING_FREQ here
                 }
-                gameIndex += 1;
             }
             else {
                 neopixel_handler("failure", NPXL_NOTIF_LENGTH);
@@ -298,8 +304,7 @@ void do_batchwrite(void) {
             }
         }
         else {
-            // skipped
-            gameIndex += 1;
+            // user pressed enter; skipped
         }
     }
 }
@@ -311,7 +316,9 @@ void do_launcher(boolean dryRun = false) {
     // only launches if a new game is placed on the reader
 
     static elapsedMillis sinceLastFullChipRead;
-    static char lastGame[APPID_BUFS_MAX] = ""; // appID of the last run game
+    // todo: better management of buffers
+    static char lastGame[APPID_BUFS_MAX]           = ""; // appID of the last run game
+    static char lastCommand[NDEF_SECTOR_BYTES + 1] = ""; // command of the last run path/program
 
     neopixel_handler("waiting");
 
@@ -329,7 +336,7 @@ void do_launcher(boolean dryRun = false) {
         }
     }
 
-    uint8_t data[240];
+    uint8_t data[NDEF_SECTOR_BYTES];
     uint16_t dataLength = sizeof(data);
 
     if (!readndefentry_ntag215(&g_nfc, data, &dataLength)) {
@@ -337,7 +344,7 @@ void do_launcher(boolean dryRun = false) {
         neopixel_handler("failure", NPXL_NOTIF_LENGTH);
     }
     else {
-        char mode = toupper(data[3]); // v-i-a- S(team), G(og), P(ath), D(olphin)...
+        char mode = toupper(data[3]); // v-i-a- S(team), P(ath) <works for any other type of program>
         switch (mode) {
         case 'S': {
             // steam game
@@ -345,8 +352,12 @@ void do_launcher(boolean dryRun = false) {
             char *id_start = strstr((char *) data, CUSTOM_ASCII_DELIMITER) + 1;
             char *id_end   = strstr((char *) id_start, CUSTOM_ASCII_DELIMITER) - 1;
             uint8_t id_len = id_end - id_start + 1;
-            // boolean vr     = (*(id_end + 2) == 'Y');
-            // todo: all the vr launching logic
+
+            boolean vr = (*(id_end + 2) == 'Y');
+            if (vr && isDSVR(dipSwitches)) {
+                pc_send_vr_hotkey();
+            }
+
             // todo: read and confirm checksum bytes
 
             if (strncmp(lastGame, id_start, id_len)) {
@@ -365,15 +376,15 @@ void do_launcher(boolean dryRun = false) {
                     }
                     itoa(randomID, appIDitoa_buf, 10);
                     strcat(steamCommandBuf, appIDitoa_buf);
-                    if (!dryRun && (dipSwitches & 0b001)) {
-                        pc_kill_game(lastGame);
+                    if (!dryRun && isDSAC(dipSwitches)) {
+                        pc_kill_game(lastGame, ALTF4_ANY);
                     }
                     strcpy(lastGame, appIDitoa_buf);
                 }
                 else {
                     strncat(steamCommandBuf, id_start, id_len);
-                    if (!dryRun && (dipSwitches & 0b001)) {
-                        pc_kill_game(lastGame);
+                    if (!dryRun && isDSAC(dipSwitches)) {
+                        pc_kill_game(lastGame, ALTF4_ANY);
                     }
                     strncpy(lastGame, id_start, id_len);
                 }
@@ -392,13 +403,37 @@ void do_launcher(boolean dryRun = false) {
             break;
         }
 
-        // these modes need to reset the lastGame variable to "\0" for steam mode so pc_kill_game doesn't try to close a game that's not running
-        case 'G': {
-        }
         case 'P': {
+            // scan ahead to the next delimiters
+            char *command_start = strstr((char *) data, CUSTOM_ASCII_DELIMITER) + 1;
+            char *command_end   = strstr((char *) command_start, CUSTOM_ASCII_DELIMITER) - 1;
+            uint8_t command_len = command_end - command_start + 1;
+            // todo: read and confirm checksum bytes
+
+            if (strncmp(lastCommand, command_start, command_len)) {
+                // the game differs from the last game
+                neopixel_handler("busy");
+                strncpy(lastCommand, command_start, command_len);
+                if (!dryRun && isDSAC(dipSwitches)) {
+                    pc_kill_game(lastGame, ALTF4_ANY);
+                }
+                strcpy(lastGame, "_"); // so pc_kill_game doesn't try to close a game that's not running (if called from case 'S')
+                Serial.print("Running: ");
+                Serial.println(lastCommand);
+                if (!dryRun) {
+                    pc_run_command(lastCommand);
+                }
+                neopixel_handler("success", NPXL_NOTIF_LENGTH);
+            }
+            else {
+                Serial.println("Waiting (same game on reader)");
+                neopixel_handler("waiting");
+            }
+            break;
         }
-        case 'D': {
-        }
+        default:
+            // malformed data? do nothing
+            break;
         }
     }
 }
@@ -423,7 +458,7 @@ void setup(void) {
 
     updateDipSwitches();
 
-    if ((dipSwitches & 0b100) || (dipSwitches & 0b010)) {
+    if (isDSWFSM(dipSwitches)) {
         while (!Serial) {
             delay(10);
         }
@@ -448,6 +483,10 @@ void setup(void) {
             ; // HALT
     }
 
+    float coreTempC = tempmonGetTemp();
+    Serial.print("Core temperature: ");
+    Serial.println(coreTempC);
+
     Serial.print("Checking EEPROM objects stored: ");
     Serial.println(EEPROM.read(0) << 2);
 
@@ -465,17 +504,18 @@ void setup(void) {
     Serial.println(randomSeed);
     srandom(randomSeed);
 
-    Serial.print("DIP Config (debug|batchWrite|closePrev) = ");
-    Serial.print(dipSwitches, 2);
-    Serial.print("-");
-    Serial.println(dipSwitches);
-
+    Serial.print("DIP Config = ");
+    Serial.print(dipSwitches & 0b100);
+    Serial.print(dipSwitches & 0b010);
+    Serial.print(dipSwitches & 0b001);
+    Serial.println();
+    
     // setup all good
     g_neopixelTimer.end();
     neopixel_handler("success", NPXL_NOTIF_LENGTH);
 
     // ### possibly: enter batch setup mode ###
-    if (dipSwitches & 0b010) {
+    if (dipSwitches == DIPSW_BATCHWRITE) {
         do_batchwrite();
         neopixel_handler("busy", NPXL_NOTIF_LENGTH);
         Serial.println("Batch game writing is all done!");
@@ -489,11 +529,11 @@ void setup(void) {
         Serial.println("Nothing more to do");
         Serial.println("Please set the dip switches for normal operation and power cycle the reader");
         neopixel_handler("success");
-        
+
         Serial.println("<EXIT>");
         Serial.flush();
         Serial.end(); // doesn't actually do anything
-        while(1)
+        while (1)
             ;
     }
 }
