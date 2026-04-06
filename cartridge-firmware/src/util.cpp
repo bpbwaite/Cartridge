@@ -2,6 +2,18 @@
 
 // helpful i/o functions
 
+boolean isDSAC(uint8_t ds) {
+    return (ds == DIPSW_STD_AC) || (ds == DIPSW_STD_VR_AC) || (ds == DIPSW_WFSM_VR_AC);
+}
+
+boolean isDSVR(uint8_t ds) {
+    return (ds == DIPSW_STD_VR) || (ds == DIPSW_STD_VR_AC) || (ds == DIPSW_WFSM_VR_AC);
+}
+
+boolean isDSWFSM(uint8_t ds) {
+    return (ds == DIPSW_WFSM) || (ds == DIPSW_WFSM_VR_AC) || (ds == DIPSW_BATCHWRITE);
+}
+
 void print_eeprom(void) {
     const uint32_t eeprom_size = E2END + 1;
     Serial.print("[");
@@ -18,9 +30,26 @@ void print_eeprom(void) {
     Serial.println("]");
 }
 
+void pc_send_vr_hotkey(void) {
+    // Note: the PC needs to intercept and know what to do with the hotkey.
+    // Could be turning on outlets for baystations, or a fan, launching SteamVR or WiGig software, setting a smarthome scene, etc
+    int vr_sequence[] = VR_HOTKEY_SEQUENCE;
+    int vr_len = sizeof(vr_sequence) / sizeof(int);
+    
+    Keyboard.releaseAll();
+    for (int hotkey = 0; hotkey < vr_len; hotkey++) {
+        Keyboard.press(vr_sequence[hotkey]);
+    }
+    delay(1000 / KEYBOARD_BW_HZ);
+    Keyboard.releaseAll();
+
+}
+
 void pc_run_command(const char *s) {
     // runs a powershell command through the run dialog
     // powershell exits upon completion
+    // command may contain quotation marks; they are escaped
+    // keyboard delays are added to prevent skipping in OS buffer - never write more than ~32B before delaying
     Keyboard.releaseAll(); // reset
 
     Keyboard.press(MODIFIERKEY_LEFT_GUI);
@@ -29,9 +58,18 @@ void pc_run_command(const char *s) {
     Keyboard.release(MODIFIERKEY_LEFT_GUI);
     delay(WIN_RUN_WAIT); // time to hopefully open the RUN dialog
     Keyboard.print("powershell.exe -Command \"");
-    Keyboard.print(s);
+    delay(1000 * 25 / KEYBOARD_BW_HZ);
+    
+    for (uint32_t ci = 0; ci < strlen(s); ci++){
+        if (s[ci] == '"') {
+            Keyboard.print("\\");
+        }
+        Keyboard.print(s[ci]);
+        delay(1000 / KEYBOARD_BW_HZ);
+    }
+    
     Keyboard.print("\"");
-    delay(17); // wait for printing to complete?
+    delay(1000 / KEYBOARD_BW_HZ);
     Keyboard.press(KEY_ENTER);
     Keyboard.release(KEY_ENTER);
 }
@@ -51,6 +89,7 @@ void pc_kill_game(const char *appID, boolean just_alt_f4) {
             Keyboard.releaseAll();
             Keyboard.press(MODIFIERKEY_LEFT_ALT);
             Keyboard.press(KEY_F4);
+            delay(1000 / KEYBOARD_BW_HZ);
             Keyboard.releaseAll();
             return;
         }
@@ -66,7 +105,7 @@ void pc_kill_game(const char *appID, boolean just_alt_f4) {
         Keyboard.release(MODIFIERKEY_LEFT_GUI);
         delay(WIN_RUN_WAIT); // time to hopefully open the RUN dialog
         Keyboard.print("steam://open/console");
-        delay(17); // wait for printing to complete?
+        delay(20 * 1000 / KEYBOARD_BW_HZ);
         Keyboard.press(KEY_ENTER);
         Keyboard.release(KEY_ENTER);
         delay(WIN_RUN_WAIT);     // time to hopefully open the steam console
@@ -79,16 +118,21 @@ void pc_kill_game(const char *appID, boolean just_alt_f4) {
         Keyboard.release(MODIFIERKEY_LEFT_CTRL);
         Keyboard.press(KEY_BACKSPACE);
         Keyboard.release(KEY_BACKSPACE);
+        delay(1000 / KEYBOARD_BW_HZ);
         // enter the command:
         Keyboard.print("app_stop ");
         Keyboard.print(appID);
         Keyboard.print(" force:1");
-        delay(250); // wait for printing to complete?
+        delay((9+8+24) * 1000 / KEYBOARD_BW_HZ);
+        
+        delay(250); // extra wait for printing to complete:
         // todo: check if this needs to be longer/can be shorter.
         // the steam UI is weird and has variable response to key presses, sometimes its slower than windows
         // so the window minimizes before the command is even executed.
+        
         Keyboard.press(KEY_ENTER);
         Keyboard.release(KEY_ENTER);
+        delay(1000 / KEYBOARD_BW_HZ);
         Keyboard.press(MODIFIERKEY_LEFT_GUI);
         Keyboard.press(KEY_DOWN);
         Keyboard.release(KEY_DOWN);
@@ -113,14 +157,14 @@ boolean pn532_init(Adafruit_PN532 *nfc, uint8_t limit_retries) {
     Serial.println((versiondata >> 8) & 0xFF, DEC);
     nfc->setPassiveActivationRetries(limit_retries);
 
-    Serial.print("Using ");
-    if (limit_retries == 0xFF) {
-        Serial.print("infinite (blocking)");
-    }
-    else {
-        Serial.print(limit_retries);
-    }
-    Serial.println(" retries during read-passives!");
+    // Serial.print("Using ");
+    // if (limit_retries == 0xFF) {
+    //     Serial.print("infinite (blocking)");
+    // }
+    // else {
+    //     Serial.print(limit_retries);
+    // }
+    // Serial.println(" retries during read-passives!");
 
     return true;
 }
@@ -202,6 +246,8 @@ boolean read_ntag2xx(Adafruit_PN532 *nfc, uint8_t *data, uint8_t pages_stop, uin
 boolean updatendef_ntag215(Adafruit_PN532 *nfc, const uint8_t *uid, const char *uri, uint8_t ndefprefix) {
     // performs basic CC check to see if the tag is formatted for NDEF
     // must pass the uid acquired from pn532_get_chip, which is assumed length 7
+    // todo: verify the contents were FULLY written successfully by reading it back
+
     uint8_t data_area_size;
     uint8_t data[32];
     memset(data, 0, 4);
@@ -220,7 +266,6 @@ boolean updatendef_ntag215(Adafruit_PN532 *nfc, const uint8_t *uid, const char *
     for (uint8_t i = 4; i < (data_area_size / 4) + 4; i++) {
         memset(data, 0, 4);
         boolean success = nfc->ntag2xx_WritePage(i, data);
-        Serial.print(".");
         if (!success) {
             Serial.println(" ERROR!");
             return false;
