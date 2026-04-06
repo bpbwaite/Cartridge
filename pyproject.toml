@@ -1,7 +1,7 @@
 [project]
 
 name="Cartridge"
-version=0.2.0
+version=0.2.1
 description="Tools for the creation of a simulated physical game library"
 requires-python = ">=3.11.9"
 
