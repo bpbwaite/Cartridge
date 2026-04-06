@@ -62,7 +62,7 @@ def asciiify(all_games: dict) -> dict:
     for gameID in list(all_games):
         name = all_games[gameID]
         name = name.encode("ascii", errors='ignore').decode("utf-8", errors='ignore')
-        name = ''.join(c for c in name if c.isalpha())
+        name = ''.join(c for c in name if c.isalnum())
         all_games.pop(gameID)
         all_games[gameID] = name
     
@@ -339,10 +339,19 @@ def writeGamesSerial(infile: str):
                         while True:
                             if "<NEXTGAME>" in echo():
                                 game = F.readline()
+                                while game[0] == '#':
+                                    game = F.readline()
                                 if "<>" in game:
                                     S.write('*\n'.encode()) # done
                                     # move on to random section
                                     break
+                                elif "Start-Process" in game:
+                                    # custom path game
+                                    gameName = game.split(" ", 1)[0]
+                                    gameCommand = game.split(" ", 1)[1] # get command from line where line is GameNameOneWord (space) command
+                                    print(f'CUSTOM: {gameName}')
+                                    print(f'CUSTOM: {gameCommand}')
+                                    S.write(gameCommand.encode())
                                 else:
                                     S.write(game.encode())
 
