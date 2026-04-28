@@ -7,6 +7,11 @@ printer_sheets.pdf
 
 old/
 
+# PyInstaller
+build/
+dist/
+*.spec
+
 .env
 .envrc
 .venv
