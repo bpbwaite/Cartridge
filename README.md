@@ -33,6 +33,7 @@ Because it's super cool, and having a physical representation of your library ma
 (todo)
 + python script build
 + platformio env:teensy40
++ uploading the firmware
 
 ## Assembly
 
@@ -43,7 +44,7 @@ You will need:
 + 1x Teensy 4.0
 + 1x PN532 NFC Module
 + 1x Micro USB Cable (with functional D+/D- wires)
-+ 1x FR4 PCB Protoboard 
++ 1x FR4 Protoboard -OR- a populated PCB
 + 1x DIP Switch (3 switches, 6 pin)
 + 7x Self-tapping 2.5mm Screws
 + Neopixel Strip (3 LEDs long)
