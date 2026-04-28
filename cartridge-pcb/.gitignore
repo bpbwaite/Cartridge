@@ -1,0 +1,6 @@
+*.lck
+
+*.zip
+*.bak
+
+gerbers/
