@@ -12,8 +12,13 @@ import numpy as np
 import cv2 # opencv-python
 import img2pdf
 
+# todo: slim down imports to only required functions
 # todo: invent even more clever variable names
 # todo: use globs where appropriate
+# todo: abstract out constants, protocols, formats...
+
+ListFileMaxNameBytes = 16
+ImageCacheDir = 'copied_images_cache'
 
 def getMyGamesAndNames(source: str) -> dict[str, str]:
     # return a dictionary mapping appIDs to names, stripping any special characters
@@ -271,7 +276,7 @@ def buildGameList(ofile: str, games_by_appID: dict[str, str], doRequests: bool =
                     vr = "Y"
                     vr_counter += 1
                     games_by_appID[appID] += '_VR=TRUE' # reuse this dictionary, could be dangerous, we'll see
-            F.write(f'{gameName[:16]}:{appID}:{vr}\n')
+            F.write(f'{gameName}:{appID}:{vr}\n')
 
         print()
 
@@ -288,8 +293,10 @@ def buildGameList(ofile: str, games_by_appID: dict[str, str], doRequests: bool =
 
     print(f'Exported {counter} games, {vr_counter} tagged as using VR')
 
-def writeGamesSerial(infile: str):
-    
+def writeGamesSerial(infile_serial: str, flashingThisRun: dict[str, str] = {}):
+
+    # flashingThisRun not yet implemented sorry
+
     ports = serial.tools.list_ports.comports()
     if not ports:
         print('No ports found, aborting upload')
@@ -333,7 +340,7 @@ def writeGamesSerial(infile: str):
                     return from_teensy
 
                 try:
-                    with open(infile, "rt") as F:
+                    with open(infile_serial, "rt") as F:
                         header = F.readline().rstrip()
                         print(f'File header: {header}')
                         while True:
@@ -404,17 +411,48 @@ def writeGamesSerial(infile: str):
         pass
 
     print('Done. Power cycle the reader before re-running this setup')
-                
+
+def getGamesFromFile(infile: str) -> dict[str, str]:
+    lines: str = ''
+    games_file_pattern = r"""^([^<]\S+):(\d+):"""
+    games_from_file_by_appid = {}
+
+    with open(infile, 'rt') as F:
+        lines = F.read()
+
+    matches = re.findall(games_file_pattern, lines, re.MULTILINE)
+    for match in matches:
+        nameTruncated, appid = match[0], match[1]                    
+        games_from_file_by_appid[appid] = nameTruncated
+    return games_from_file_by_appid
+
+def deleteImagesCache(dir: str = ImageCacheDir) -> None:
+    if os.path.exists(dir):
+        os.rmdir(dir)
+
 def main():
     # get installation path variables from user
     default_steampaths = 'C:/Program Files (x86)/Steam'
     games_eeprom_file = 'batch_game_list_local.txt'
+    games_eeprom_file_old = 'batch_game_list_local.bak'
     yes = {'y', 'yes'}
-    # if there is an eeprom file, ask if we want to skip ahead and install it
+    choiceIgnore = {'a', 'ignore'}
+    choiceDiff = {'b', 'only'}
+    choiceUpload = {'c', 'skip'}
+
+    # if there is an eeprom file, ask if we want to skip ahead and install it, or only run on the difference
     if os.path.isfile(games_eeprom_file):
-        if input('There is an existing list. Skip build and upload games now? (y/n) >> ').lower() in yes:
+        choice = input('There is an existing list. Would you like to (A) Ignore and start over, (B) Only build and upload new games since the last run, or (C) Skip build and upload games now? (A/B/C) >> ').lower().strip()
+        if choice in choiceUpload:
             writeGamesSerial(games_eeprom_file)
             return
+        if choice in choiceDiff:
+            shutil.copy(games_eeprom_file, games_eeprom_file_old)
+        if choice in choiceIgnore:
+            # default
+            os.remove(games_eeprom_file)
+            os.remove(games_eeprom_file_old)
+            
     
     steam_install_path = input('Is Steam installed at "' + default_steampaths + '"? (y/n) >> ')
     if steam_install_path.lower() in yes:
@@ -433,17 +471,49 @@ def main():
     if input('Would you like to upload the games list upon completion? (y/n) >> ').lower() in yes:
         wants_eeprom = True
 
+    ###
+
     games_by_appID = asciiify(removeMiscGames(getMyGamesAndNames(steam_library_path)))
-    print('Acquired real installed games list')
-    getImages('steam', steam_install_path, games_by_appID, 'copied_images')
-    n = generatePrintableImageGrids('copied_images')
-    buildGameList(games_eeprom_file, games_by_appID, doRequests=need_VR_tags)
-    
-    print(f'You can now print the {n}-page "printer_sheets.pdf"')
-    os.startfile('printer_sheets.pdf')
-    
-    if wants_eeprom:
-        writeGamesSerial(games_eeprom_file)    
+    # pre-write name truncation for possible comparison to .bak file, later
+    for game in games_by_appID:
+        games_by_appID[game] = games_by_appID[game][:ListFileMaxNameBytes]
+
+    if os.path.exists(games_eeprom_file_old):
+        games_by_appID_old = getGamesFromFile(games_eeprom_file_old)
+        for app in games_by_appID_old:
+            if app in games_by_appID:
+                games_by_appID.pop(app)
+        print('Acquired newly installed games list')
+        #print('After writing over serial, rerun the program and choose (A) to properly setup random game functionality!')
+        deleteImagesCache()
+        getImages('steam', steam_install_path, games_by_appID, ImageCacheDir)
+        n = generatePrintableImageGrids(ImageCacheDir)
+        buildGameList(games_eeprom_file, games_by_appID, doRequests=need_VR_tags)
+        print(f'You can now print the {n}-page "printer_sheets.pdf"')
+        os.startfile('printer_sheets.pdf')
+
+        # regenerate the whole list for flashing random and for next time
+        games_by_appID_newest = asciiify(removeMiscGames(getMyGamesAndNames(steam_library_path)))
+        for game in games_by_appID_newest:
+            games_by_appID_newest[game] = games_by_appID_newest[game][:ListFileMaxNameBytes]
+        buildGameList(games_eeprom_file, games_by_appID_newest, doRequests=need_VR_tags)
+
+        if wants_eeprom:
+            writeGamesSerial(games_eeprom_file, games_by_appID) 
+
+
+    else:
+        print('Acquired real installed games list')
+        getImages('steam', steam_install_path, games_by_appID, ImageCacheDir)
+        n = generatePrintableImageGrids(ImageCacheDir)
+
+        buildGameList(games_eeprom_file, games_by_appID, doRequests=need_VR_tags)
+        
+        print(f'You can now print the {n}-page "printer_sheets.pdf"')
+        os.startfile('printer_sheets.pdf')
+        
+        if wants_eeprom:
+            writeGamesSerial(games_eeprom_file)    
 
 if __name__ == '__main__':
     main()
