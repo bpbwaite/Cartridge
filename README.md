@@ -1,10 +1,21 @@
 # Cartridge
 
-Tools for creating a physical game library
+Tools for creating a physical game library.
+
+---
+
+![](images/thumbnail_interleaved.jpg)
 
 ## Description
 
 Cartridge lets you launch PC games with NFC tags - without any software running on your computer.
+
+---
+
+| ![](images/electronics_labels.jpg) | ![](images/game_laying_labels.png) |
+|------------------------------------|------------------------------------|
+
+---
 
 ### Features
 
@@ -18,11 +29,11 @@ Cartridge lets you launch PC games with NFC tags - without any software running 
     + Option to close Steam games when a new game is launched via Cartridge
     + Option to launch a random game with a specific Cartridge
     + Stylish indicator LEDs
----
+
 + ***NOTE:*** Cartridge is still in development. It only works on Windows 10/11. Library image generation is limited to Steam games at the moment.
     + Upcoming features: Sound effects, Linux support (with some additional setup), optional WiFi module?
 
-![Version 4](images/version4.png)
+---
 
 ### Why?
 
@@ -34,6 +45,12 @@ Because it's super cool, and having a physical representation of your library ma
 + python script build
 + platformio env:teensy40
 + uploading the firmware
+
+---
+
+![](images/version4.png)
+
+---
 
 ## Assembly
 
@@ -57,3 +74,7 @@ You will need:
 + 3D Printer filament
 
 (todo assembly instructions)
+
+## Demo
+
+https://www.youtube.com/watch?v=b9ThTMVmSbA
