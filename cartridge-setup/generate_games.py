@@ -9,7 +9,7 @@ import threading
 import re
 import requests
 import numpy as np
-import cv2 # opencv-python
+import cv2  # opencv-python
 import img2pdf
 
 # todo: slim down imports to only required functions
@@ -18,124 +18,175 @@ import img2pdf
 # todo: abstract out constants, protocols, formats...
 
 ListFileMaxNameBytes = 16
-ImageCacheDir = 'copied_images_cache'
+ImageCacheDir = "copied_images_cache"
+
 
 def getMyGamesAndNames(source: str) -> dict[str, str]:
     # return a dictionary mapping appIDs to names, stripping any special characters
-    games_by_appID : dict[str, str] = {} # map appID to name
+    games_by_appID: dict[str, str] = {}  # map appID to name
 
     appid_pattern = r'^\s*"appid"[^"]*"(\d*)"(?:.|\n)*"name"[^"]*"([^"]*)"'
-    
+
     print("Scanning, please wait...")
-    source += '/steamapps'
+    source += "/steamapps"
     files_and_dirs = os.listdir(source)
-    for file in files_and_dirs: # could be a dir
-        if file.startswith('appmanifest_') and file.endswith('.acf'): # having this extension all but guarantees its a file
-            #print(f'Reading {file}...')
+    for file in files_and_dirs:  # could be a dir
+        if file.startswith("appmanifest_") and file.endswith(
+            ".acf"
+        ):  # having this extension all but guarantees its a file
+            # print(f'Reading {file}...')
             with open(os.path.join(source, file), "r") as F:
                 manifest = F.read()
                 match = re.search(appid_pattern, manifest, re.MULTILINE | re.IGNORECASE)
                 if not match:
                     print("No match in file " + file)
                 else:
-                    appid, name = match.groups()[0], match.groups()[1]                    
+                    appid, name = match.groups()[0], match.groups()[1]
                     games_by_appID[appid] = name
-    
+
     print("Scan Complete")
     return games_by_appID
 
+
 def removeMiscGames(all_games: dict) -> dict:
     # filter out soundtracks, demos, tools
-    filter_out = {"SteamLinuxRuntime", " Soundtrack", " Demo", "ProtonExperimental", "Proton90", "tModLoader"}
+    filter_out = {
+        "SteamLinuxRuntime",
+        " Soundtrack",
+        " Demo",
+        "ProtonExperimental",
+        "Proton90",
+        "tModLoader",
+    }
     # more aggressive filters for tools
     filter_out2 = {"3DMark", "Natural Locomotion", "Wallpaper Engine", "Friend's Pass"}
-    
+
     skipped_games = []
     for gameID in list(all_games):
         gameName = all_games[gameID]
-        for filt in (filter_out | filter_out2):
+        for filt in filter_out | filter_out2:
             if filt in gameName:
                 skipped_games.append(gameName)
                 all_games.pop(gameID)
     if len(skipped_games) > 0:
-        print(f'Skipping these: {skipped_games}')
+        print(f"Skipping these: {skipped_games}")
     return all_games
+
 
 def asciiify(all_games: dict) -> dict:
     # remove non ascii and then non alnum chars
     # not ascii encoding first has led to some chars like (R) slipping through
     for gameID in list(all_games):
         name = all_games[gameID]
-        name = name.encode("ascii", errors='ignore').decode("utf-8", errors='ignore')
-        name = ''.join(c for c in name if c.isalnum())
+        name = name.encode("ascii", errors="ignore").decode("utf-8", errors="ignore")
+        name = "".join(c for c in name if c.isalnum())
         all_games.pop(gameID)
         all_games[gameID] = name
-    
+
     return all_games
 
-def getImages(platform: str, source: str, games_by_appID: dict[str, str], cachefolder: str):
+
+def getImages(
+    platform: str, source: str, games_by_appID: dict[str, str], cachefolder: str
+):
     def flatten_list(xss):
         return [x for xs in xss for x in xs]
-    
+
     if not cachefolder:
         return
-    
+
     platform = platform.lower().strip()
-    
+
     # clear and rebuild the image cache
     dest_path = os.path.join(os.getcwd(), cachefolder)
     if cachefolder in os.listdir():
-        shutil.rmtree(os.path.join(dest_path)) # careful you could delete the whole project if cachefolder is empty
+        shutil.rmtree(
+            os.path.join(dest_path)
+        )  # careful you could delete the whole project if cachefolder is empty
     os.mkdir(cachefolder)
 
-    if platform == 'steam':
-        source = os.path.join(source, 'appcache/librarycache')
+    if platform == "steam":
+        source = os.path.join(source, "appcache/librarycache")
         partials = set()
         for root, dirs, files in os.walk(source):
             for file in files:
-                if file.endswith('.jpg'):
+                if file.endswith(".jpg"):
                     im = cv2.imread(os.path.join(root, file))
                     assert im is not None
                     im_h, im_w = im.shape[:2]
-                    if (im_h, im_w) == (32, 32) or file.endswith('600x900.jpg') or file.endswith('_capsule.jpg'):
+                    if (
+                        (im_h, im_w) == (32, 32)
+                        or file.endswith("600x900.jpg")
+                        or file.endswith("_capsule.jpg")
+                    ):
                         # when we find an image, we don't know what search depth is at
-                        appIDcandidates = flatten_list([d.split("/") for d in root.split("\\")])
+                        appIDcandidates = flatten_list(
+                            [d.split("/") for d in root.split("\\")]
+                        )
                         for appID in appIDcandidates:
                             if appID in games_by_appID:
                                 shutil.copy(os.path.join(root, file), dest_path)
                                 if (im_h, im_w) == (32, 32):
-                                    shutil.move(os.path.join(dest_path, file), os.path.join(dest_path, (games_by_appID[appID][:5] + '_' + appID + '_icon.jpg')))
+                                    shutil.move(
+                                        os.path.join(dest_path, file),
+                                        os.path.join(
+                                            dest_path,
+                                            (
+                                                games_by_appID[appID][:5]
+                                                + "_"
+                                                + appID
+                                                + "_icon.jpg"
+                                            ),
+                                        ),
+                                    )
                                 else:
-                                    shutil.move(os.path.join(dest_path, file), os.path.join(dest_path, (games_by_appID[appID][:5] + '_' + appID + '_lib.jpg')))
+                                    shutil.move(
+                                        os.path.join(dest_path, file),
+                                        os.path.join(
+                                            dest_path,
+                                            (
+                                                games_by_appID[appID][:5]
+                                                + "_"
+                                                + appID
+                                                + "_lib.jpg"
+                                            ),
+                                        ),
+                                    )
                             elif appID.isdecimal() and not appID in games_by_appID:
                                 if not (appID in partials):
                                     partials.add(appID)
         if len(partials) > 0:
-            print(f"{len(partials)} partial games found and skipped (they are not installed, and they could be cached data from the store)")
-                    
-    
-    elif platform == 'gog':
+            print(
+                f"{len(partials)} partial games found and skipped (they are not installed, and they could be cached data from the store)"
+            )
+
+    elif platform == "gog":
         pass
-        #gogpath = 'C:\\ProgramData\\GOG.com\\Galaxy'
-        #gogpath += '\\webcache'
+        # gogpath = 'C:\\ProgramData\\GOG.com\\Galaxy'
+        # gogpath += '\\webcache'
         # res = (342, 482)
         # todo: implement gog support
 
-def generatePrintableImageGrids(source: str, width: int = floor(300*8.5), height: int = floor(300*11)) -> int:
+
+def generatePrintableImageGrids(
+    source: str, width: int = floor(300 * 8.5), height: int = floor(300 * 11)
+) -> int:
     # default w x h is us-letter
     # made specifically for a 6x7 grid of 300x450 images with icons
-    def drawGrid(bg, images, rows, cols, start_x=0, start_y=0, pad_x=0, pad_y=0, rotation=0):
+    def drawGrid(
+        bg, images, rows, cols, start_x=0, start_y=0, pad_x=0, pad_y=0, rotation=0
+    ):
         assert rotation in (0, 90, 180, 270)
         rot_map = {
             0: None,
             90: cv2.ROTATE_90_CLOCKWISE,
             180: cv2.ROTATE_180,
-            270: cv2.ROTATE_90_COUNTERCLOCKWISE
+            270: cv2.ROTATE_90_COUNTERCLOCKWISE,
         }
 
         out = bg.copy()
         sample = images[0]
-        
+
         if rotation != 0:
             sample = cv2.rotate(sample, rot_map[rotation])
         h, w = sample.shape[:2]
@@ -152,26 +203,38 @@ def generatePrintableImageGrids(source: str, width: int = floor(300*8.5), height
 
             x = start_x + c * (w + pad_x)
             y = start_y + r * (h + pad_y)
-            out[y:y+h, x:x+w] = tile
+            out[y : y + h, x : x + w] = tile
 
         return out
 
     page = 0
-    paths_lib = sorted([os.path.join(source, iname) for iname in os.listdir(source) if '_lib.jpg' in iname])
+    paths_lib = sorted(
+        [
+            os.path.join(source, iname)
+            for iname in os.listdir(source)
+            if "_lib.jpg" in iname
+        ]
+    )
     # build icons indirectly from library to avoid duplicates/mismatches
-    paths_ico = sorted([os.path.join(source, iname.replace('_lib', '_icon')) for iname in os.listdir(source) if '_lib.jpg' in iname])
-    background = np.ones((height, width, 3), dtype=np.uint8) * 255 # basic, all white 
+    paths_ico = sorted(
+        [
+            os.path.join(source, iname.replace("_lib", "_icon"))
+            for iname in os.listdir(source)
+            if "_lib.jpg" in iname
+        ]
+    )
+    background = np.ones((height, width, 3), dtype=np.uint8) * 255  # basic, all white
     max_pages: int = ceil(len(paths_lib) / 42)
-    
-    while(True):
-        # collect a set of images
-        if page == max_pages: # todo: break when actual limit reached
-            break
-        print(f'Organizing page {page+1} of {max_pages}')
 
-        path_set = paths_lib[(page*42) : (page*42+42)]
+    while True:
+        # collect a set of images
+        if page == max_pages:  # todo: break when actual limit reached
+            break
+        print(f"Organizing page {page+1} of {max_pages}")
+
+        path_set = paths_lib[(page * 42) : (page * 42 + 42)]
         # get library cards, scale if necessary
-        tiles = [cv2.resize(cv2.imread(p), (300, 450), interpolation=cv2.INTER_NEAREST) for p in path_set] # type: ignore
+        tiles = [cv2.resize(cv2.imread(p), (300, 450), interpolation=cv2.INTER_NEAREST) for p in path_set]  # type: ignore
         result = drawGrid(
             bg=background,
             images=tiles,
@@ -181,11 +244,16 @@ def generatePrintableImageGrids(source: str, width: int = floor(300*8.5), height
             start_y=72,
             pad_x=70,
             pad_y=2,
-            rotation=0
+            rotation=0,
         )
 
         # create bridges, a 4x64 strip on the left side to cover the gap between the icon
-        tiles = [cv2.GaussianBlur(t[ 23:(23+64), :4], (3, 3), sigmaX=0, borderType=cv2.BORDER_WRAP) for t in tiles]
+        tiles = [
+            cv2.GaussianBlur(
+                t[23 : (23 + 64), :4], (3, 3), sigmaX=0, borderType=cv2.BORDER_WRAP
+            )
+            for t in tiles
+        ]
         result = drawGrid(
             bg=result,
             images=tiles,
@@ -195,12 +263,12 @@ def generatePrintableImageGrids(source: str, width: int = floor(300*8.5), height
             start_y=95,
             pad_x=366,
             pad_y=388,
-            rotation=0
+            rotation=0,
         )
 
-        path_set = paths_ico[(page*42) : (page*42+42)]
-        # get icons and scale them 
-        tiles = [cv2.resize(cv2.imread(p), (64, 64), interpolation=cv2.INTER_NEAREST) for p in path_set] # type: ignore
+        path_set = paths_ico[(page * 42) : (page * 42 + 42)]
+        # get icons and scale them
+        tiles = [cv2.resize(cv2.imread(p), (64, 64), interpolation=cv2.INTER_NEAREST) for p in path_set]  # type: ignore
         result = drawGrid(
             bg=result,
             images=tiles,
@@ -210,62 +278,76 @@ def generatePrintableImageGrids(source: str, width: int = floor(300*8.5), height
             start_y=95,
             pad_x=306,
             pad_y=388,
-            rotation=90
+            rotation=90,
         )
 
         cv2.imwrite(f"{source}/sheet_p{page+1}.png", result)
         page += 1
 
     # convert generated images cache to pdf
-    print('Generating .PDF')
-    with open("printer_sheets.pdf", 'wb') as F:
-        pngs = sorted([f'{source}/{i}' for i in os.listdir(source) if i.endswith(".png") and i.startswith("sheet_p")], 
-                      key=lambda fname: int(fname.rsplit('.', 1)[0].split('sheet_p')[1]))
+    print("Generating .PDF")
+    with open("printer_sheets.pdf", "wb") as F:
+        pngs = sorted(
+            [
+                f"{source}/{i}"
+                for i in os.listdir(source)
+                if i.endswith(".png") and i.startswith("sheet_p")
+            ],
+            key=lambda fname: int(fname.rsplit(".", 1)[0].split("sheet_p")[1]),
+        )
         pdfbytes = img2pdf.convert(pngs)
         assert pdfbytes is not None
         F.write(pdfbytes)
 
     return max_pages
 
+
 def isSteamGameVR(appID: str) -> bool:
     # max call speed: rate limit is 200 calls per 5min (every 667 ms) or 100k/d (every 864 ms) whichever is hit first
-    response = requests.get(f'https://store.steampowered.com/api/appdetails?appids={appID}')
+    response = requests.get(
+        f"https://store.steampowered.com/api/appdetails?appids={appID}"
+    )
     if response.status_code != 200:
         raise Exception
-    
-    if response.json()[appID]['success']:
-        data = response.json()[appID]['data']
-        if 'categories' in data:
-            cats = response.json()[appID]['data']['categories']
+
+    if response.json()[appID]["success"]:
+        data = response.json()[appID]["data"]
+        if "categories" in data:
+            cats = response.json()[appID]["data"]["categories"]
             for i in cats:
-                if i['id'] in [53, 54]: # code for "VR supported", "VR only"
+                if i["id"] in [53, 54]:  # code for "VR supported", "VR only"
                     return True
         else:
-            print(f"App {data['name']} ({appID}) has no category/feature tags (probably a soundtrack), ignoring VR options.")
+            print(
+                f"App {data['name']} ({appID}) has no category/feature tags (probably a soundtrack), ignoring VR options."
+            )
     return False
 
+
 def buildGameList(ofile: str, games_by_appID: dict[str, str], doRequests: bool = False):
-    
-    appIDListLimit = 255 # list limit for the random games section, not a hard library size limit
+
+    appIDListLimit = (
+        255  # list limit for the random games section, not a hard library size limit
+    )
     rate_limit = 0.001
     if doRequests:
         rate_limit = 0.668
-        print('Writing game list, this may take a moment...')
+        print("Writing game list, this may take a moment...")
     else:
-        print('Writing game list')
+        print("Writing game list")
 
-    with open(ofile, 'wt') as F:
+    with open(ofile, "wt") as F:
         F.write(f'<> Game list automatically generated on {strftime("%D %T %p")}\n')
-        
+
         time_of_last_request = 0
         counter = 0
         vr_counter = 0
         for appID in games_by_appID:
             counter = counter + 1
-            print(f'\r({counter}/{len(games_by_appID)})', end="")
-            
+            print(f"\r({counter}/{len(games_by_appID)})", end="")
+
             gameName = games_by_appID[appID]
-            
+
             # rate limit
             while time() - time_of_last_request < rate_limit:
                 pass
@@ -275,23 +357,26 @@ def buildGameList(ofile: str, games_by_appID: dict[str, str], doRequests: bool =
                 if isSteamGameVR(appID=appID):
                     vr = "Y"
                     vr_counter += 1
-                    games_by_appID[appID] += '_VR=TRUE' # reuse this dictionary, could be dangerous, we'll see
-            F.write(f'{gameName}:{appID}:{vr}\n')
+                    games_by_appID[
+                        appID
+                    ] += "_VR=TRUE"  # reuse this dictionary, could be dangerous, we'll see
+            F.write(f"{gameName}:{appID}:{vr}\n")
 
         print()
 
         # write non-vr games to the random eeprom
-        F.write('<> Random games\n')
+        F.write("<> Random games\n")
         for i, appID in enumerate(sorted(list(games_by_appID), key=lambda _: random())):
             if i >= appIDListLimit:
                 break
-            if '_VR=TRUE' in games_by_appID[appID]:
-                print(f'Skipped writing {games_by_appID[appID]} to random games list')
-                appIDListLimit += 1 # try for a different game
+            if "_VR=TRUE" in games_by_appID[appID]:
+                print(f"Skipped writing {games_by_appID[appID]} to random games list")
+                appIDListLimit += 1  # try for a different game
                 continue
-            F.write(f'{appID}\n')
+            F.write(f"{appID}\n")
 
-    print(f'Exported {counter} games, {vr_counter} tagged as using VR')
+    print(f"Exported {counter} games, {vr_counter} tagged as using VR")
+
 
 def writeGamesSerial(infile_serial: str, flashingThisRun: dict[str, str] = {}):
 
@@ -299,26 +384,26 @@ def writeGamesSerial(infile_serial: str, flashingThisRun: dict[str, str] = {}):
 
     ports = serial.tools.list_ports.comports()
     if not ports:
-        print('No ports found, aborting upload')
+        print("No ports found, aborting upload")
         return
-    print('Port enumeration:')
+    print("Port enumeration:")
     port_dict = {}
     for ii, port in enumerate(ports):
         i = ii + 1
         port_dict[i] = port
-        print(f'\t[{i}] - {port.name}:{port.device} - {port.description}', end='')
+        print(f"\t[{i}] - {port.name}:{port.device} - {port.description}", end="")
         if port.vid == 0x16C0 and port.pid >= 0x0477 and port.pid <= 0x0488:
-            print(' <-- Teensy!', end='')
+            print(" <-- Teensy!", end="")
     print()
 
     teensy_port = ""
     if len(port_dict) == 1 and port_dict[1].vid == 0x16C0:
-        print(f'Automatically found Teensy on {port_dict[1].name}')
+        print(f"Automatically found Teensy on {port_dict[1].name}")
         teensy_port = port_dict[1].name
     else:
-        print('Please choose a COM port for uploading')
+        print("Please choose a COM port for uploading")
         while True:
-            choice = input('(Enter a number) >> ')
+            choice = input("(Enter a number) >> ")
             if not choice.isnumeric():
                 continue
             choice = int(choice)
@@ -335,36 +420,38 @@ def writeGamesSerial(infile_serial: str, flashingThisRun: dict[str, str] = {}):
                 def echo() -> str:
                     while S.in_waiting == 0:
                         sleep(0.01)
-                    from_teensy = S.readline().decode(errors='replace').rstrip()
-                    print(f'[{time():.3f}] -> {from_teensy}')
+                    from_teensy = S.readline().decode(errors="replace").rstrip()
+                    print(f"[{time():.3f}] -> {from_teensy}")
                     return from_teensy
 
                 try:
                     with open(infile_serial, "rt") as F:
                         header = F.readline().rstrip()
-                        print(f'File header: {header}')
+                        print(f"File header: {header}")
                         while True:
                             if "<NEXTGAME>" in echo():
                                 game = F.readline()
-                                while game[0] == '#':
+                                while game[0] == "#":
                                     game = F.readline()
                                 if "<>" in game:
-                                    S.write('*\n'.encode()) # done
+                                    S.write("*\n".encode())  # done
                                     # move on to random section
                                     break
                                 elif "Start-Process" in game:
                                     # custom path game
                                     gameName = game.split(" ", 1)[0]
-                                    gameCommand = game.split(" ", 1)[1] # get command from line where line is GameNameOneWord (space) command
-                                    print(f'CUSTOM: {gameName}')
-                                    print(f'CUSTOM: {gameCommand}')
+                                    gameCommand = game.split(" ", 1)[
+                                        1
+                                    ]  # get command from line where line is GameNameOneWord (space) command
+                                    print(f"CUSTOM: {gameName}")
+                                    print(f"CUSTOM: {gameCommand}")
                                     S.write(gameCommand.encode())
                                 else:
                                     S.write(game.encode())
 
                         while not ("<RANDOMGAMES>" in echo()):
                             pass
-                        
+
                         appIDs = []
                         while True:
                             id = F.readline().strip()
@@ -372,77 +459,94 @@ def writeGamesSerial(infile_serial: str, flashingThisRun: dict[str, str] = {}):
                                 break
                             appIDs.append(int(id))
                         S.write(bytes([len(appIDs)]))
-                    
-                    print(f'Writing {len(appIDs)} appIDs')
+
+                    print(f"Writing {len(appIDs)} appIDs")
                     for id in appIDs:
-                        #print(f'ID:<{id}>')
-                        S.write(bytes([
-                            (id & 0xFF000000) >> 24, 
-                            (id & 0x00FF0000) >> 16, 
-                            (id & 0x0000FF00) >> 8, 
-                            (id & 0x000000FF) >> 0
-                            ]))
-                    S.write('*\n'.encode()) # done
+                        # print(f'ID:<{id}>')
+                        S.write(
+                            bytes(
+                                [
+                                    (id & 0xFF000000) >> 24,
+                                    (id & 0x00FF0000) >> 16,
+                                    (id & 0x0000FF00) >> 8,
+                                    (id & 0x000000FF) >> 0,
+                                ]
+                            )
+                        )
+                    S.write("*\n".encode())  # done
 
                     # Echo until thread is forced to exit
                     while not ("<EXIT>" in echo()):
                         pass
-                
+
                 except serial.SerialException as e:
                     pass
-                    #print(f'Subroutine thread disconnected ({e})')
-                print(f'Serial thread disconnected, press enter to exit') # continues in main function
+                    # print(f'Subroutine thread disconnected ({e})')
+                print(
+                    f"Serial thread disconnected, press enter to exit"
+                )  # continues in main function
                 return
-            
-            coroutine = threading.Thread(target=serial_monitor_routine, daemon=True) # args=(S,)
+
+            coroutine = threading.Thread(
+                target=serial_monitor_routine, daemon=True
+            )  # args=(S,)
             coroutine.start()
-            
+
             while True:
                 if not coroutine.is_alive():
                     coroutine.join()
                     break
                 _ = input()
-                S.write('X\n'.encode())
-        
+                S.write("X\n".encode())
+
     except serial.SerialException as e:
-        #print(f'Main thread disconnected ({e})')
+        # print(f'Main thread disconnected ({e})')
         pass
     except KeyboardInterrupt:
         pass
 
-    print('Done. Power cycle the reader before re-running this setup')
+    print("Done. Power cycle the reader before re-running this setup")
+
 
 def getGamesFromFile(infile: str) -> dict[str, str]:
-    lines: str = ''
+    lines: str = ""
     games_file_pattern = r"""^([^<]\S+):(\d+):"""
     games_from_file_by_appid = {}
 
-    with open(infile, 'rt') as F:
+    with open(infile, "rt") as F:
         lines = F.read()
 
     matches = re.findall(games_file_pattern, lines, re.MULTILINE)
     for match in matches:
-        nameTruncated, appid = match[0], match[1]                    
+        nameTruncated, appid = match[0], match[1]
         games_from_file_by_appid[appid] = nameTruncated
     return games_from_file_by_appid
+
 
 def deleteImagesCache(dir: str = ImageCacheDir) -> None:
     if os.path.exists(dir):
         os.rmdir(dir)
 
+
 def main():
     # get installation path variables from user
-    default_steampaths = 'C:/Program Files (x86)/Steam'
-    games_eeprom_file = 'batch_game_list_local.txt'
-    games_eeprom_file_old = 'batch_game_list_local.bak'
-    yes = {'y', 'yes'}
-    choiceIgnore = {'a', 'ignore'}
-    choiceDiff = {'b', 'only'}
-    choiceUpload = {'c', 'skip'}
+    default_steampaths = "C:/Program Files (x86)/Steam"
+    games_eeprom_file = "batch_game_list_local.txt"
+    games_eeprom_file_old = "batch_game_list_local.bak"
+    yes = {"y", "yes"}
+    choiceIgnore = {"a", "ignore"}
+    choiceDiff = {"b", "only"}
+    choiceUpload = {"c", "skip"}
 
     # if there is an eeprom file, ask if we want to skip ahead and install it, or only run on the difference
     if os.path.isfile(games_eeprom_file):
-        choice = input('There is an existing list. Would you like to (A) Ignore and start over, (B) Only build and upload new games since the last run, or (C) Skip build and upload games now? (A/B/C) >> ').lower().strip()
+        choice = (
+            input(
+                "There is an existing list. Would you like to (A) Ignore and start over, (B) Only build and upload new games since the last run, or (C) Skip build and upload games now? (A/B/C) >> "
+            )
+            .lower()
+            .strip()
+        )
         if choice in choiceUpload:
             writeGamesSerial(games_eeprom_file)
             return
@@ -452,23 +556,40 @@ def main():
             # default
             os.remove(games_eeprom_file)
             os.remove(games_eeprom_file_old)
-            
-    
-    steam_install_path = input('Is Steam installed at "' + default_steampaths + '"? (y/n) >> ')
+
+    steam_install_path = input(
+        'Is Steam installed at "' + default_steampaths + '"? (y/n) >> '
+    )
     if steam_install_path.lower() in yes:
         steam_install_path = default_steampaths
     else:
-        steam_install_path = input('Enter the location of your Steam install, e.g. G:/Programs/Steam\n>> ')
-    steam_library_path = input('Are your Steam games installed at "' + default_steampaths + '"? (y/n) >> ')
+        steam_install_path = input(
+            "Enter the location of your Steam install, e.g. G:/Programs/Steam\n>> "
+        )
+    steam_library_path = input(
+        'Are your Steam games installed at "' + default_steampaths + '"? (y/n) >> '
+    )
     if steam_library_path.lower() in yes:
         steam_library_path = default_steampaths
     else:
-        steam_library_path = input('Enter the location of your Steam library, e.g. G:/Games/Steam\n>> ')
+        steam_library_path = input(
+            "Enter the location of your Steam library, e.g. G:/Games/Steam\n>> "
+        )
     need_VR_tags = False
-    if input('Do you need tags for your VR titles? Advanced option, takes longer. (y/n) >> ').lower() in yes:
+    if (
+        input(
+            "Do you need tags for your VR titles? Advanced option, takes longer. (y/n) >> "
+        ).lower()
+        in yes
+    ):
         need_VR_tags = True
     wants_eeprom = False
-    if input('Would you like to upload the games list upon completion? (y/n) >> ').lower() in yes:
+    if (
+        input(
+            "Would you like to upload the games list upon completion? (y/n) >> "
+        ).lower()
+        in yes
+    ):
         wants_eeprom = True
 
     ###
@@ -483,39 +604,43 @@ def main():
         for app in games_by_appID_old:
             if app in games_by_appID:
                 games_by_appID.pop(app)
-        print('Acquired newly installed games list')
-        #print('After writing over serial, rerun the program and choose (A) to properly setup random game functionality!')
+        print("Acquired newly installed games list")
+        # print('After writing over serial, rerun the program and choose (A) to properly setup random game functionality!')
         deleteImagesCache()
-        getImages('steam', steam_install_path, games_by_appID, ImageCacheDir)
+        getImages("steam", steam_install_path, games_by_appID, ImageCacheDir)
         n = generatePrintableImageGrids(ImageCacheDir)
         buildGameList(games_eeprom_file, games_by_appID, doRequests=need_VR_tags)
         print(f'You can now print the {n}-page "printer_sheets.pdf"')
-        os.startfile('printer_sheets.pdf')
+        os.startfile("printer_sheets.pdf")
 
         # regenerate the whole list for flashing random and for next time
-        games_by_appID_newest = asciiify(removeMiscGames(getMyGamesAndNames(steam_library_path)))
+        games_by_appID_newest = asciiify(
+            removeMiscGames(getMyGamesAndNames(steam_library_path))
+        )
         for game in games_by_appID_newest:
-            games_by_appID_newest[game] = games_by_appID_newest[game][:ListFileMaxNameBytes]
+            games_by_appID_newest[game] = games_by_appID_newest[game][
+                :ListFileMaxNameBytes
+            ]
         buildGameList(games_eeprom_file, games_by_appID_newest, doRequests=need_VR_tags)
 
         if wants_eeprom:
-            writeGamesSerial(games_eeprom_file, games_by_appID) 
-
+            writeGamesSerial(games_eeprom_file, games_by_appID)
 
     else:
-        print('Acquired real installed games list')
-        getImages('steam', steam_install_path, games_by_appID, ImageCacheDir)
+        print("Acquired real installed games list")
+        getImages("steam", steam_install_path, games_by_appID, ImageCacheDir)
         n = generatePrintableImageGrids(ImageCacheDir)
 
         buildGameList(games_eeprom_file, games_by_appID, doRequests=need_VR_tags)
-        
+
         print(f'You can now print the {n}-page "printer_sheets.pdf"')
-        os.startfile('printer_sheets.pdf')
-        
+        os.startfile("printer_sheets.pdf")
+
         if wants_eeprom:
-            writeGamesSerial(games_eeprom_file)    
+            writeGamesSerial(games_eeprom_file)
 
     sleep(5)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
