@@ -1,6 +1,9 @@
 __pycache__/
 .vscode/
 
+cartridge-setup/copied_images*/*
+cartridge-setup/batch_game_list_local*.*
+cartridge-setup/printer_sheets.pdf
 copied_images*/*
 batch_game_list_local*.*
 printer_sheets.pdf

@@ -515,5 +515,7 @@ def main():
         if wants_eeprom:
             writeGamesSerial(games_eeprom_file)    
 
+    sleep(5)
+
 if __name__ == '__main__':
     main()
