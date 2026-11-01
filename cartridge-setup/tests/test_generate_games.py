@@ -1,4 +1,4 @@
-from generate_games import asciiify
+from src.acquire_games import asciiify
 
 
 def test_asciiify_removes_non_ascii_and_non_alphanumeric_characters():
