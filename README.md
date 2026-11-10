@@ -23,6 +23,7 @@ Cartridge lets you launch PC games with NFC tags - without any software running 
     + Automatically generates your game list without any sign-ins
     + Automatically generates a printable library PDF, to cut and paste on your 3D printed Cartridges
     + Semi-automated NFC tag provisioning
+    + Prints and writes only newly acquired game tags
 + Configurable Reader
     + Launch any game or executable file by placing a Cartridge on the Reader
     + Send a hotkey combination when launching SteamVR games (e.g. to launch WiGig software or power on bay-stations)

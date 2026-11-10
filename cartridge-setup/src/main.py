@@ -1,116 +1,241 @@
-# todo: invent even more clever variable names
-# todo: use globs where appropriate
-# todo: abstract out constants, protocols, formats...
-
+import hashlib
+import json
 import os
-import shutil
-from time import sleep
 
-from acquire_games import (
-    ImageCacheDir,
-    ListFileMaxNameBytes,
-    asciiify,
-    buildGameList,
-    deleteImagesCache,
-    generatePrintableImageGrids,
-    getGamesFromFile,
-    getImages,
-    getMyGamesAndNames,
-    removeMiscGames,
-)
-from flash_games import writeGamesSerial
+if __package__:
+    from .acquire_games import (
+        ImageCacheDir,
+        ListFileMaxNameBytes,
+        asciiify,
+        buildGameList,
+        createTimestampedGameListPath,
+        generatePrintableImageGrids,
+        getImages,
+        getLatestGameListPath,
+        getMyGamesAndNames,
+        removeMiscGames,
+    )
+    from .flash_games import gameLineKey, writeGamesSerial
+else:
+    from acquire_games import (
+        ImageCacheDir,
+        ListFileMaxNameBytes,
+        asciiify,
+        buildGameList,
+        createTimestampedGameListPath,
+        generatePrintableImageGrids,
+        getImages,
+        getLatestGameListPath,
+        getMyGamesAndNames,
+        removeMiscGames,
+    )
+    from flash_games import gameLineKey, writeGamesSerial
+
+GAME_LIST_STEM = "batch_game_list_local"
+UPLOAD_STATE_FILE = f"{GAME_LIST_STEM}.uploaded.json"
 
 
-def main():
-    # get installation path variables from user
-    default_steampaths = "C:/Program Files (x86)/Steam"
-    games_eeprom_file = "batch_game_list_local.txt"
-    games_eeprom_file_old = "batch_game_list_local.bak"
-    yes = {"y", "yes"}
-    choiceIgnore = {"a", "ignore"}
-    choiceDiff = {"b", "only"}
-    choiceUpload = {"c", "skip"}
+def _read_games(steam_library_path: str) -> dict[str, str]:
+    games = asciiify(removeMiscGames(getMyGamesAndNames(steam_library_path)))
+    return {app_id: name[:ListFileMaxNameBytes] for app_id, name in games.items()}
 
-    # if there is an eeprom file, ask if we want to skip ahead and install it, or only run on the difference
-    if os.path.isfile(games_eeprom_file):
-        choice = (
-            input(
-                "There is an existing list. Would you like to (A) Ignore and start over, (B) Only build and upload new games since the last run, or (C) Skip build and upload games now? (A/B/C) >> "
-            )
-            .lower()
-            .strip()
+
+def _file_digest(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as game_list:
+        for chunk in iter(lambda: game_list.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _show_sync_status(game_list_path: str, state_path: str) -> None:
+    if not os.path.isfile(state_path):
+        print("No successful upload is recorded for this setup.")
+        return
+    try:
+        with open(state_path, "rt", encoding="utf-8") as state_file:
+            state = json.load(state_file)
+    except (OSError, json.JSONDecodeError) as error:
+        print(f"Could not read the previous upload record: {error}")
+        return
+
+    if not isinstance(state, dict):
+        print("The previous upload record is invalid; reader synchronization is unknown.")
+    elif not isinstance(state.get("sha256"), str):
+        print("No successful upload is recorded for this setup.")
+    elif state["sha256"] == _file_digest(game_list_path):
+        print("This list matches the last uploaded list (the reader's current state is not independently verified).")
+    else:
+        print("This list differs from the last successfully uploaded list; the reader may be out of date.")
+
+
+def _read_list_entries(game_list_path: str) -> list[str]:
+    # every game in a list file, as the keys used for tag bookkeeping (see gameLineKey)
+    entries = []
+    with open(game_list_path, "rt") as game_list:
+        for line in game_list:
+            if line.startswith("<> Random games"):
+                break
+            key = gameLineKey(line)
+            if key:
+                entries.append(key)
+    return entries
+
+
+def _load_upload_record(state_path: str) -> dict:
+    if not os.path.isfile(state_path):
+        return {}
+    try:
+        with open(state_path, "rt", encoding="utf-8") as state_file:
+            record = json.load(state_file)
+    except (OSError, json.JSONDecodeError) as error:
+        print(f"Could not read the previous upload record: {error}")
+        return {}
+    return record if isinstance(record, dict) else {}
+
+
+def _tagged_entries(record: dict, directory: str = ".") -> set[str] | None:
+    # the games that already have a written tag, or None if that was never recorded
+    ids = record.get("confirmed_game_ids")
+    if isinstance(ids, list):
+        tagged = {app_id for app_id in ids if isinstance(app_id, str) and app_id.isdecimal()}
+        commands = record.get("confirmed_custom_commands")
+        if isinstance(commands, list):
+            tagged.update(command for command in commands if isinstance(command, str))
+        return tagged
+
+    filename = record.get("filename")
+    if isinstance(filename, str):
+        recorded_list = os.path.join(directory, filename)
+        if os.path.isfile(recorded_list):
+            return set(_read_list_entries(recorded_list))
+    return None
+
+
+def _save_upload_record(state_path: str, record: dict, tagged: set[str], uploaded_list: str | None = None) -> None:
+    # uploaded_list is only given after a complete upload, the tagged set is saved every time
+    record["confirmed_game_ids"] = sorted((entry for entry in tagged if entry.isdecimal()), key=int)
+    record["confirmed_custom_commands"] = sorted(entry for entry in tagged if not entry.isdecimal())
+    if uploaded_list:
+        record["filename"] = os.path.basename(uploaded_list)
+        record["sha256"] = _file_digest(uploaded_list)
+    temporary_path = f"{state_path}.tmp"
+    with open(temporary_path, "wt", encoding="utf-8") as state_file:
+        json.dump(record, state_file, indent=2)
+        state_file.write("\n")
+    os.replace(temporary_path, state_path)
+
+
+def _ask_tagged_baseline(read_input, directory: str = ".") -> set[str]:
+    # asked once, when there is no record of which tags exist
+    candidates = sorted(name for name in os.listdir(directory) if name.startswith(GAME_LIST_STEM) and name.endswith((".txt", ".bak")))
+    if not candidates:
+        return set()
+
+    print("There is no record of which game tags have already been written.")
+    print("Which list matches the tags you already have?")
+    print("\t[0] - none, no tags have been written yet")
+    for i, name in enumerate(candidates, start=1):
+        print(f"\t[{i}] - {name} ({len(set(_read_list_entries(os.path.join(directory, name))))} games)")
+    while True:
+        choice = read_input("(Enter a number) >> ").strip()
+        if choice.isdecimal() and int(choice) <= len(candidates):
+            break
+    if int(choice) == 0:
+        return set()
+    return set(_read_list_entries(os.path.join(directory, candidates[int(choice) - 1])))
+
+
+def _ask_choice(read_input, prompt: str, choices: set[str]) -> str:
+    while True:
+        choice = read_input(prompt).lower().strip()
+        if choice in choices:
+            return choice
+        print(f"Please choose one of: {', '.join(sorted(choices))}")
+
+
+def main(input_fn=None) -> None:
+    read_input = input if input_fn is None else input_fn
+    default_steam_path = "C:/Program Files (x86)/Steam"
+    previous_game_list = getLatestGameListPath()
+    state_path = UPLOAD_STATE_FILE
+    record = _load_upload_record(state_path)
+    tagged = _tagged_entries(record)
+    if tagged is None:
+        tagged = _ask_tagged_baseline(read_input)
+        _save_upload_record(state_path, record, tagged)
+        print(f"Recorded {len(tagged)} games as already tagged.")
+    action = "build"
+    use_difference = False
+
+    if previous_game_list:
+        print(f"Found existing game list: {previous_game_list}")
+        choice = _ask_choice(
+            read_input,
+            "Would you like to (A) start a new list, (B) build cards for newly installed games, " "or (C) use this list without rebuilding? (A/B/C) >> ",
+            {"a", "b", "c"},
         )
-        if choice in choiceUpload:
-            writeGamesSerial(games_eeprom_file)
-            return
-        if choice in choiceDiff:
-            shutil.copy(games_eeprom_file, games_eeprom_file_old)
-        if choice in choiceIgnore:
-            # default
-            os.remove(games_eeprom_file)
-            os.remove(games_eeprom_file_old)
+        if choice == "c":
+            action = "upload_existing"
+        elif choice == "b":
+            use_difference = True
 
-    steam_install_path = input('Is Steam installed at "' + default_steampaths + '"? (y/n) >> ')
-    if steam_install_path.lower() in yes:
-        steam_install_path = default_steampaths
+    if action == "build":
+        steam_install_path = read_input(f'Is Steam installed at "{default_steam_path}"? (y/n) >> ')
+        if steam_install_path.lower().strip() in {"y", "yes"}:
+            steam_install_path = default_steam_path
+        else:
+            steam_install_path = read_input("Enter the location of your Steam install, e.g. G:/Programs/Steam\n>> ")
+
+        steam_library_path = read_input(f'Are your Steam games installed at "{default_steam_path}"? (y/n) >> ')
+        if steam_library_path.lower().strip() in {"y", "yes"}:
+            steam_library_path = default_steam_path
+        else:
+            steam_library_path = read_input("Enter the location of your Steam library, e.g. G:/Games/Steam\n>> ")
+
+        need_vr_tags = read_input("Do you need tags for your VR titles? Advanced option, takes longer. (y/n) >> ").lower().strip() in {"y", "yes"}
+
+        all_games = _read_games(steam_library_path)
+        printable_games = all_games
+        if use_difference:
+            printable_games = {app_id: name for app_id, name in all_games.items() if app_id not in tagged}
+            print(f"Found {len(printable_games)} games without a tag.")
+
+        if printable_games:
+            getImages("steam", steam_install_path, printable_games, ImageCacheDir)
+            page_count = generatePrintableImageGrids(ImageCacheDir)
+            print(f'You can now print the {page_count}-page "printer_sheets.pdf"')
+            os.startfile("printer_sheets.pdf")
+        else:
+            print("No new games to create printable cards for.")
+
+        game_list_path = createTimestampedGameListPath()
+        buildGameList(game_list_path, all_games, doRequests=need_vr_tags)
+        print(f"Wrote complete game list: {game_list_path}")
     else:
-        steam_install_path = input("Enter the location of your Steam install, e.g. G:/Programs/Steam\n>> ")
-    steam_library_path = input('Are your Steam games installed at "' + default_steampaths + '"? (y/n) >> ')
-    if steam_library_path.lower() in yes:
-        steam_library_path = default_steampaths
+        game_list_path = previous_game_list
+
+    _show_sync_status(game_list_path, state_path)
+    if read_input("Upload this game list to the reader now? (y/n) >> ").lower().strip() in {"y", "yes"}:
+        all_entries = set(_read_list_entries(game_list_path))
+        pending = all_entries - tagged
+        print(f"Current list: {len(all_entries)} games; {len(all_entries) - len(pending)} already tagged; {len(pending)} tag entries are pending.")
+        print(f"Sending {len(pending)} new tag entries and refreshing the full randomizer pool (reader limit: 255 games).")
+        print("After the last game, the reader waits for your randomizer cartridge before it accepts the random games list.")
+        result = writeGamesSerial(game_list_path, only_entries=pending)
+
+        written = result.confirmed_game_ids & pending
+        tagged.update(written)
+        _save_upload_record(state_path, record, tagged, uploaded_list=game_list_path if result.success else None)
+        print(f"{len(written)} game tags were written and recorded.")
+        if result.success:
+            print(f"Recorded {os.path.basename(game_list_path)} as the last successfully uploaded list.")
+        else:
+            print("Upload was not confirmed; the random games list on the reader may be out of date.")
+        if pending - written:
+            print(f"{len(pending - written)} game tags were not written; they will be offered again next time.")
     else:
-        steam_library_path = input("Enter the location of your Steam library, e.g. G:/Games/Steam\n>> ")
-    need_VR_tags = False
-    if input("Do you need tags for your VR titles? Advanced option, takes longer. (y/n) >> ").lower() in yes:
-        need_VR_tags = True
-    wants_eeprom = False
-    if input("Would you like to upload the games list upon completion? (y/n) >> ").lower() in yes:
-        wants_eeprom = True
-
-    ###
-
-    games_by_appID = asciiify(removeMiscGames(getMyGamesAndNames(steam_library_path)))
-    # pre-write name truncation for possible comparison to .bak file, later
-    for game in games_by_appID:
-        games_by_appID[game] = games_by_appID[game][:ListFileMaxNameBytes]
-
-    if os.path.exists(games_eeprom_file_old):
-        games_by_appID_old = getGamesFromFile(games_eeprom_file_old)
-        for app in games_by_appID_old:
-            if app in games_by_appID:
-                games_by_appID.pop(app)
-        print("Acquired newly installed games list")
-        # print('After writing over serial, rerun the program and choose (A) to properly setup random game functionality!')
-        deleteImagesCache()
-        getImages("steam", steam_install_path, games_by_appID, ImageCacheDir)
-        n = generatePrintableImageGrids(ImageCacheDir)
-        buildGameList(games_eeprom_file, games_by_appID, doRequests=need_VR_tags)
-        print(f'You can now print the {n}-page "printer_sheets.pdf"')
-        os.startfile("printer_sheets.pdf")
-
-        # regenerate the whole list for flashing random and for next time
-        games_by_appID_newest = asciiify(removeMiscGames(getMyGamesAndNames(steam_library_path)))
-        for game in games_by_appID_newest:
-            games_by_appID_newest[game] = games_by_appID_newest[game][:ListFileMaxNameBytes]
-        buildGameList(games_eeprom_file, games_by_appID_newest, doRequests=need_VR_tags)
-
-        if wants_eeprom:
-            writeGamesSerial(games_eeprom_file, games_by_appID)
-
-    else:
-        print("Acquired real installed games list")
-        getImages("steam", steam_install_path, games_by_appID, ImageCacheDir)
-        n = generatePrintableImageGrids(ImageCacheDir)
-
-        buildGameList(games_eeprom_file, games_by_appID, doRequests=need_VR_tags)
-
-        print(f'You can now print the {n}-page "printer_sheets.pdf"')
-        os.startfile("printer_sheets.pdf")
-
-        if wants_eeprom:
-            writeGamesSerial(games_eeprom_file)
-
-    sleep(5)
+        print("Upload deferred; your physical library may not match the current game list.")
 
 
 if __name__ == "__main__":
