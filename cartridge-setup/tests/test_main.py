@@ -16,7 +16,7 @@ def test_upload_prompt_runs_each_run_and_records_only_success(tmp_path, monkeypa
         prompts.append(prompt)
         if prompt.startswith("(Enter a number)"):
             return "0"
-        return "c" if prompt.startswith("Would you like") else "y"
+        return "b" if prompt.startswith("Would you like") else "y"
 
     monkeypatch.setattr(main, "writeGamesSerial", lambda *_args, **_kwargs: UploadResult(False))
     main.main(input_fn=input_fn)
@@ -88,7 +88,7 @@ def test_new_run_prints_and_flashes_only_new_games_but_keeps_full_randomizer_poo
 
     monkeypatch.setattr(main, "buildGameList", build_game_list)
     monkeypatch.setattr(main, "writeGamesSerial", write_games_serial)
-    responses = iter(["1", "b", "y", "y", "n", "y"])
+    responses = iter(["1", "a", "y", "y", "n", "y"])
 
     main.main(input_fn=lambda _: next(responses))
 
@@ -116,7 +116,7 @@ def test_tagged_baseline_can_be_a_personal_copy_and_is_saved_before_upload(tmp_p
         return UploadResult(False, frozenset({"200"}))
 
     monkeypatch.setattr(main, "writeGamesSerial", write_games_serial)
-    responses = iter(["1", "c", "y"])
+    responses = iter(["1", "b", "y"])
 
     main.main(input_fn=lambda _: next(responses))
 

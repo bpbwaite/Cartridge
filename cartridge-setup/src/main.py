@@ -166,19 +166,14 @@ def main(input_fn=None) -> None:
         _save_upload_record(state_path, record, tagged)
         print(f"Recorded {len(tagged)} games as already tagged.")
     action = "build"
-    use_difference = False
 
     if previous_game_list:
         print(f"Found existing game list: {previous_game_list}")
         choice = _ask_choice(
-            read_input,
-            "Would you like to (A) start a new list, (B) build cards for newly installed games, " "or (C) use this list without rebuilding? (A/B/C) >> ",
-            {"a", "b", "c"},
+            read_input, "Would you like to (A) build a new list and cards for your new games, or (B) use this list without rebuilding? (A/B) >> ", {"a", "b"}
         )
-        if choice == "c":
+        if choice == "b":
             action = "upload_existing"
-        elif choice == "b":
-            use_difference = True
 
     if action == "build":
         steam_install_path = read_input(f'Is Steam installed at "{default_steam_path}"? (y/n) >> ')
@@ -196,10 +191,9 @@ def main(input_fn=None) -> None:
         need_vr_tags = read_input("Do you need tags for your VR titles? Advanced option, takes longer. (y/n) >> ").lower().strip() in {"y", "yes"}
 
         all_games = _read_games(steam_library_path)
-        printable_games = all_games
-        if use_difference:
-            printable_games = {app_id: name for app_id, name in all_games.items() if app_id not in tagged}
-            print(f"Found {len(printable_games)} games without a tag.")
+        # cards are only printed for games that do not have a tag yet
+        printable_games = {app_id: name for app_id, name in all_games.items() if app_id not in tagged}
+        print(f"Found {len(printable_games)} games without a tag.")
 
         if printable_games:
             getImages("steam", steam_install_path, printable_games, ImageCacheDir)
