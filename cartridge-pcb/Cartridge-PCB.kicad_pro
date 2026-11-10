@@ -8,7 +8,7 @@
         "apply_defaults_to_fp_fields": false,
         "apply_defaults_to_fp_shapes": false,
         "apply_defaults_to_fp_text": false,
-        "board_outline_line_width": 0.05,
+        "board_outline_line_width": 0.1,
         "copper_line_width": 0.2,
         "copper_text_italic": false,
         "copper_text_size_h": 1.5,
@@ -39,9 +39,9 @@
         "other_text_thickness": 0.15,
         "other_text_upright": false,
         "pads": {
-          "drill": 1.03,
-          "height": 1.95,
-          "width": 1.78
+          "drill": 1.8,
+          "height": 1.8,
+          "width": 1.8
         },
         "silk_line_width": 0.15,
         "silk_text_italic": false,
@@ -50,7 +50,7 @@
         "silk_text_thickness": 0.15,
         "silk_text_upright": false,
         "zones": {
-          "min_clearance": 0.5
+          "min_clearance": 0.0
         }
       },
       "diff_pair_dimensions": [
@@ -146,7 +146,7 @@
         "min_track_width": 0.1524,
         "min_via_annular_width": 0.127,
         "min_via_diameter": 0.5,
-        "solder_mask_to_copper_clearance": 0.0,
+        "solder_mask_to_copper_clearance": 0.0762,
         "use_height_for_length_calcs": true
       },
       "teardrop_options": [
@@ -195,7 +195,9 @@
       ],
       "track_widths": [
         0.0,
-        0.31
+        0.31,
+        0.4,
+        0.8
       ],
       "tuning_pattern_settings": {
         "diff_pair_defaults": {
@@ -497,7 +499,7 @@
     "classes": [
       {
         "bus_width": 12,
-        "clearance": 0.2,
+        "clearance": 0.2032,
         "diff_pair_gap": 0.25,
         "diff_pair_via_gap": 0.25,
         "diff_pair_width": 0.2,
@@ -508,7 +510,7 @@
         "pcb_color": "rgba(0, 0, 0, 0.000)",
         "priority": 2147483647,
         "schematic_color": "rgba(0, 0, 0, 0.000)",
-        "track_width": 0.2,
+        "track_width": 0.25,
         "tuning_profile": "",
         "via_diameter": 0.6,
         "via_drill": 0.3,
@@ -516,9 +518,29 @@
       },
       {
         "clearance": 0.25,
-        "name": "Power Rail, 1A",
-        "pcb_color": "rgba(0, 0, 0, 0.000)",
+        "name": "Neopixel 800kHz Dataline",
+        "pcb_color": "rgb(0, 255, 0)",
+        "priority": 1,
+        "schematic_color": "rgba(0, 0, 0, 0.000)",
+        "track_width": 0.2,
+        "tuning_profile": ""
+      },
+      {
+        "clearance": 0.25,
+        "name": "PWRGND",
+        "pcb_color": "rgb(194, 194, 194)",
         "priority": 0,
+        "schematic_color": "rgba(0, 0, 0, 0.000)",
+        "track_width": 0.31,
+        "tuning_profile": "",
+        "via_diameter": 0.8,
+        "via_drill": 0.4
+      },
+      {
+        "clearance": 0.25,
+        "name": "Power Rail, 1A",
+        "pcb_color": "rgb(255, 153, 0)",
+        "priority": 4,
         "schematic_color": "rgba(0, 0, 0, 0.000)",
         "track_width": 0.31,
         "tuning_profile": "",
@@ -528,13 +550,31 @@
       {
         "clearance": 0.25,
         "name": "Power Rail, 2A",
-        "pcb_color": "rgba(0, 0, 0, 0.000)",
-        "priority": 1,
+        "pcb_color": "rgb(255, 0, 255)",
+        "priority": 5,
         "schematic_color": "rgba(0, 0, 0, 0.000)",
         "track_width": 1.19,
         "tuning_profile": "",
         "via_diameter": 0.8,
         "via_drill": 0.3
+      },
+      {
+        "clearance": 0.25,
+        "name": "SPI",
+        "pcb_color": "rgb(0, 255, 0)",
+        "priority": 3,
+        "schematic_color": "rgba(0, 0, 0, 0.000)",
+        "track_width": 0.25,
+        "tuning_profile": ""
+      },
+      {
+        "clearance": 0.5,
+        "name": "unconnected",
+        "pcb_color": "rgb(0, 132, 132)",
+        "priority": 2,
+        "schematic_color": "rgba(0, 0, 0, 0.000)",
+        "track_width": 0.1524,
+        "tuning_profile": ""
       }
     ],
     "meta": {
@@ -552,8 +592,16 @@
         "pattern": "/3V3"
       },
       {
-        "netclass": "Power Rail, 1A",
+        "netclass": "PWRGND",
         "pattern": "GND"
+      },
+      {
+        "netclass": "SPI",
+        "pattern": "/SPI*"
+      },
+      {
+        "netclass": "unconnected",
+        "pattern": "unconnected-*"
       }
     ]
   },
@@ -685,7 +733,7 @@
         "uuid": "d783fe36-1ab4-412e-a370-8ddb0a7d9565"
       }
     ],
-    "used_designators": "C1,J3,R1,TP1-4",
+    "used_designators": "U2",
     "variants": []
   },
   "sheets": [
@@ -699,25 +747,6 @@
     "meta": {
       "version": 0
     },
-    "tuning_profiles_impedance_geometric": [
-      {
-        "enable_time_domain_tuning": true,
-        "layer_entries": [
-          {
-            "bottom_reference_layer": "B.Cu",
-            "delay": 0,
-            "diff_pair_gap": 0,
-            "signal_layer": "B.Cu",
-            "top_reference_layer": "UNDEFINED",
-            "width": 200000
-          }
-        ],
-        "profile_name": "SPI",
-        "target_impedance": 0.0,
-        "type": 0,
-        "via_overrides": [],
-        "via_prop_delay": 0
-      }
-    ]
+    "tuning_profiles_impedance_geometric": []
   }
 }
