@@ -40,12 +40,16 @@ Cartridge lets you launch PC games with NFC tags - without any software running 
 
 Because it's super cool, and having a physical representation of your library makes it fun and easy to share.
 
-## Building Source
+## Building From Source
 
-(todo)
-+ python script build
-+ platformio env:teensy40
-+ uploading the firmware
+*Requirements:* [uv](https://docs.astral.sh/uv/), Python 3.11.9 or later, PlatformIO
+```powershell
+cd cartridge-setup
+uv run python src/main.py
+pio run
+pio run -t upload
+```
+Press the button on the Teensy if/when the uploader asks for it.
 
 ---
 
